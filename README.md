@@ -1,0 +1,68 @@
+# Cone-Defined Corridor Navigation
+
+MAE 148 final project — a car that drives itself through a course marked out by
+traffic cones, where the cones are not obstacles to dodge but the thing that
+tells the car where the road is.
+
+> **Scope, stated up front:** our baseline executes a route *provided* to the
+> vehicle ("left at the first junction, right at the second"); autonomous route
+> planning is a nice-to-have.
+
+## Repository layout
+
+```
+model/       CV model development (off-car): dataset, training, OAK-D blob export
+ros2/src/    Everything that runs on the car — a ROS2 workspace source tree
+  cone_msgs/         Custom message definitions (the interfaces between layers)
+  cone_perception/   yolo_node, lidar_cluster, associate  → labeled cone list
+  cone_nav/          corridor / topology / guidance / control layers
+sim/         Synthetic cone-field generator + replay harness (no hardware needed)
+analysis/    Perception characterization, trial analysis, plotting scripts
+data/        Surveyed layouts (ground truth) and trial logs
+docs/        Report, slides, AI usage log
+```
+
+Mapping to the proposal's deliverables: `model/` → D1–D2, `analysis/` → D3 + D6,
+`ros2/src/` → D4, `data/layouts/` → D5, `docs/` → D7 + D11.
+
+## Design rule that everything depends on
+
+**Algorithm code never imports `rclpy`.** Corridor extraction, cone pairing, the
+gate state machine, graph code, planners, and pure pursuit are plain Python
+modules inside `cone_nav/`. ROS nodes are thin wrappers that subscribe, call the
+pure function, and publish. This is what lets:
+
+- Person B develop and unit-test everything against `sim/` on a laptop with no
+  ROS installed
+- pytest run on any machine: `pip install -e ros2/src/cone_nav && pytest`
+- the replay harness feed recorded logs through the exact code that runs on-car
+
+## Working on it
+
+**On the Mac (or any laptop, no ROS required):**
+
+```bash
+pip install -e ros2/src/cone_nav
+pytest ros2/src/cone_nav
+python -m sim.generate --help    # synthetic cone fields
+```
+
+**On the Pi (inside the class ROS2 container):** clone the repo, mount `ros2/src`
+into the container's workspace `src/`, then:
+
+```bash
+colcon build --packages-select cone_msgs cone_perception cone_nav
+source install/setup.bash
+```
+
+`build/`, `install/`, and `log/` are gitignored — build products stay in the
+container, never in the repo.
+
+## What is deliberately NOT in git
+
+- **Dataset images** (`model/dataset/images/`) — large binaries; the labels,
+  splits, and dataset card ARE in git. See `model/README.md` for where images live.
+- **Model weights** (`*.pt`, `*.onnx`, `*.blob`) — attach the trained model to a
+  GitHub Release instead; training configs and curves ARE in git.
+- **Rosbags** (`*.db3`, `*.mcap`) — trial CSV summaries and analysis outputs ARE
+  in git.

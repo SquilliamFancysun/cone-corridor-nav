@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# ROS2 build products (build inside the container, never commit)
+build/
+install/
+log/
+
+# Model artifacts — too large for git; attach to a GitHub Release instead
+*.pt
+*.onnx
+*.blob
+
+# Dataset images stay out of git (labels and dataset card stay in)
+model/dataset/images/*
+!model/dataset/images/.gitkeep
+
+# Recorded bags are large; keep CSV summaries in git instead
+*.db3
+*.mcap
+
+# macOS
+.DS_Store
