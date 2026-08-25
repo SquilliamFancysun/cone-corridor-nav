@@ -19,6 +19,9 @@ log/
 model/dataset/images/*
 !model/dataset/images/.gitkeep
 
+# Commit stamp written by model/capture/deploy.sh at deploy time
+model/capture/VERSION
+
 # Recorded bags are large; keep CSV summaries in git instead
 *.db3
 *.mcap

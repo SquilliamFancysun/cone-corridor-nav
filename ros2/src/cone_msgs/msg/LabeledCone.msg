@@ -1,8 +1,11 @@
 # One classified cone in the body frame (x forward, y left, meters).
 
-uint8 CLASS_BOUNDARY=0   # orange — corridor boundary
-uint8 CLASS_GATE=1       # blue — junction gate
-uint8 CLASS_GOAL=2       # green — goal
+# Colors are the classes. Left/right are relative to the direction of travel,
+# so a corridor driven in reverse still has blue on its own left.
+uint8 CLASS_BLUE=0       # left corridor boundary
+uint8 CLASS_YELLOW=1     # right corridor boundary
+uint8 CLASS_ORANGE=2     # junction gate — always placed in pairs
+uint8 CLASS_GREEN=3      # goal
 
 uint8 cone_class
 float32 confidence             # detector confidence [0, 1]

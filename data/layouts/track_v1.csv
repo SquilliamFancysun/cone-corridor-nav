@@ -1,0 +1,20 @@
+# Surveyed cone positions for track v1. See track_v1.md for the design.
+#
+# MEASURED, not designed — lay the track out with a tape per track_v1.md, then
+# record where the cones actually ended up. Read with:
+#     pandas.read_csv("track_v1.csv", comment="#")
+#
+# Frame: origin at the midpoint of the start line, x forward along Corridor A,
+# y left, meters. Measure to cone BASE CENTERS.
+# color is one of: blue | yellow | orange | green  (must match the Roboflow
+# class names and the constants in cone_msgs/msg/LabeledCone.msg)
+#
+# segment: which part of the track the cone belongs to, for plotting and for
+# slicing ground truth per corridor. One of:
+#   corridor_a | corridor_b | corridor_c | island_j1 | island_j2
+#   dead_end_a | dead_end_b | gate_j1 | gate_j2 | goal
+#
+# Example rows (delete once real measurements start):
+# 1,blue,0.00,0.75,corridor_a
+# 2,yellow,0.00,-0.75,corridor_a
+id,color,x_m,y_m,segment
