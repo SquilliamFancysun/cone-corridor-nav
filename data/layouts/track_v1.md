@@ -61,10 +61,48 @@ rather than snakes and the footprint drops to roughly 7 × 6 m.
 | Green goal | One cone, centered, end of Corridor C | |
 | Route | LEFT at J1, RIGHT at J2 | |
 
-**Cone budget** ≈ 45: 18 for the three corridors, 14 for the two fork mouths and
-islands, 12 for the two dead ends, 4 orange, 1 green. Short on cones? Spend them
-at the forks first and stretch the straights to 2 m — straights are the part the
-corridor layer extrapolates well.
+## Cone budget
+
+Every corridor segment has exactly one blue wall and one yellow wall, so each
+colour needs a cone line as long as the whole driven layout — **blue and yellow
+counts are always equal.** Total segment length is 3 + 3.5 + 3 + 1.5 + 1.5 =
+12.5 m per colour.
+
+| Colour | Full build | Minimum | What it covers |
+|---|---|---|---|
+| **Blue** | **18** | 13 | 12.5 m of left-hand wall, in three runs (outer envelope 8 m, J1 island face 1.5 m, Corridor C island face 3 m) + fork densification |
+| **Yellow** | **18** | 13 | 12.5 m of right-hand wall, in three runs (4.5 m, 6.5 m, 1.5 m) + fork densification |
+| **Orange** | **4** | 4 | Two gate pairs, one per fork. Not reducible — see below |
+| **Green** | **1** | 1 | The goal |
+| | **41** | **31** | |
+
+Full build uses 1.5 m spacing on straights; the minimum stretches straights to
+2 m and keeps 0.75 m through the fork mouths. Cut from the straights, never the
+forks — straights are the part the corridor layer extrapolates well, and the
+forks are where boundary ambiguity actually bites.
+
+**Orange does not scale down.** `gate_detect.py` keys on *pairs*, and
+`GateEvent.distance` is the range to a gate's midpoint, so a lone orange cone is
+not a weak gate — it is an undetectable one. With only two orange cones, mark one
+junction properly and leave the other unmarked rather than splitting a pair
+across both.
+
+**Buy spares of blue and yellow** (2–3 each). Cones get run over.
+
+**Consider 2 extra orange and 2 extra green** beyond the track. They are not for
+the layout — they are for the cone-zoo capture session. The track carries ~36
+boundary cones against 4 orange and 1 green, and that imbalance is the single
+biggest threat to the detector on exactly the two classes that trigger state
+transitions. Extra cones let you stage them at many ranges at once.
+
+### Dead-end end walls
+
+Each dead end is walled across its 1.5 m width. The two corner positions are
+already the last cones of the side walls, so each dead end needs exactly **one
+additional cone in the middle** — otherwise the 1.5 m gap reads as corridor and
+the car will try to drive through it. The colour of that middle cone does not
+matter to the detector; for a deterministic spec, continue the blue (left) wall
+around. Do **not** use orange for a dead-end wall: it would fire a false gate.
 
 ## Cone colors at a fork
 
