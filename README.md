@@ -19,7 +19,7 @@ ros2/src/    Everything that runs on the car — a ROS2 workspace source tree
 sim/         Synthetic cone-field generator + replay harness (no hardware needed)
 analysis/    Perception characterization, trial analysis, plotting scripts
 data/        Surveyed layouts (ground truth) and trial logs
-docs/        Report, slides, AI usage log
+docs/        Report, slides, AI usage log, verified hardware baseline
 ```
 
 Mapping to the proposal's deliverables: `model/` → D1–D2, `analysis/` → D3 + D6,
@@ -57,6 +57,11 @@ source install/setup.bash
 
 `build/`, `install/`, and `log/` are gitignored — build products stay in the
 container, never in the repo.
+
+**Before a data run:** `docs/hardware-baseline.md` records the verified USB port
+map, the cables each link actually requires, and a four-step check that every
+device is not just enumerated but working. Re-run it after any change to cabling,
+ports, or power.
 
 ## What is deliberately NOT in git
 
