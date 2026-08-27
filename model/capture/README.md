@@ -10,6 +10,10 @@ involved:
 
 They own different devices, so they run side by side.
 
+This file is the reference for the two tools. For the procedure — build the
+track, preflight, run all three panes, pull the data — see
+[`docs/data-collection.md`](../../docs/data-collection.md).
+
 ## Deploy
 
 ```

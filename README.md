@@ -22,6 +22,10 @@ data/        Surveyed layouts (ground truth) and trial logs
 docs/        Report, slides, AI usage log, verified hardware baseline
 ```
 
+**Collecting data?** [`docs/data-collection.md`](docs/data-collection.md) is the
+step-by-step runbook: build the track, preflight the hardware, run the three
+panes, pull the sessions off the car.
+
 Mapping to the proposal's deliverables: `model/` → D1–D2, `analysis/` → D3 + D6,
 `ros2/src/` → D4, `data/layouts/` → D5, `docs/` → D7 + D11.
 
@@ -58,10 +62,12 @@ source install/setup.bash
 `build/`, `install/`, and `log/` are gitignored — build products stay in the
 container, never in the repo.
 
-**Before a data run:** `docs/hardware-baseline.md` records the verified USB port
-map, the cables each link actually requires, and a four-step check that every
-device is not just enumerated but working. Re-run it after any change to cabling,
-ports, or power.
+**Before a data run:** [`docs/data-collection.md`](docs/data-collection.md) walks
+the whole procedure end to end. It leans on
+[`docs/hardware-baseline.md`](docs/hardware-baseline.md), which records the
+verified USB port map, the cables each link actually requires, and a four-step
+check that every device is not just enumerated but working — re-run that after
+any change to cabling, ports, or power.
 
 ## What is deliberately NOT in git
 
