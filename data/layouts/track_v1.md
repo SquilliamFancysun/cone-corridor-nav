@@ -5,7 +5,7 @@ on. Build it once, survey it once, and use the same geometry for training data,
 trial ground truth, and `sim/` generation.
 
 A corridor with two **Y-junctions**, each offering a dead end and a correct path,
-ending at a green goal cone. The route is *provided* to the vehicle, so the dead
+ending at a magenta goal cone. The route is *provided* to the vehicle, so the dead
 ends do not have to be discovered — they exist to make the route meaningful and
 to give us a real failure mode to measure.
 
@@ -35,7 +35,7 @@ positions and perception output are directly comparable.
   START ─────────Y──────── Corridor B ──────────Y─────────── ● GOAL
     Corridor A  [J1]          (3.5 m)          [J2]   Corridor C (3 m)
       (3 m)      ↑                              ↑
-              ●● orange                      ●● orange
+              ●● red                         ●● red
               pair, 1 m back                 pair, 1 m back
 
            route: LEFT ↗                   route: RIGHT ↘
@@ -57,8 +57,9 @@ rather than snakes and the footprint drops to roughly 7 × 6 m.
 | Segment length | A 3 m, B 3.5 m, C 3 m | |
 | Cone spacing | 1.5 m on straights, 0.75 m through fork mouths and dead-end walls | Boundary ambiguity bites at the forks; straights tolerate sparse cones |
 | Dead-end stub | 1.5 m deep, walled across the end | Long enough that the car commits before the wall is obvious |
-| Orange gates | Pairs, straddling the corridor 1.0 m before each fork | `GateEvent.distance` is "meters to gate midpoint"; `gate_detect.py` keys on *pairs*, so orange never goes down singly |
-| Green goal | One cone, centered, end of Corridor C | |
+| Red gates | Pairs, straddling the corridor 1.0 m before each fork | `GateEvent.distance` is "meters to gate midpoint"; `gate_detect.py` keys on *pairs*, so red never goes down singly |
+| Orange dead ends | The middle cone of each dead-end end wall | Its own class, so a stub is recognisable before the car commits to it |
+| Magenta goal | One cone, centered, end of Corridor C | |
 | Route | LEFT at J1, RIGHT at J2 | |
 
 ## Cone budget
@@ -72,37 +73,46 @@ counts are always equal.** Total segment length is 3 + 3.5 + 3 + 1.5 + 1.5 =
 |---|---|---|---|
 | **Blue** | **18** | 13 | 12.5 m of left-hand wall, in three runs (outer envelope 8 m, J1 island face 1.5 m, Corridor C island face 3 m) + fork densification |
 | **Yellow** | **18** | 13 | 12.5 m of right-hand wall, in three runs (4.5 m, 6.5 m, 1.5 m) + fork densification |
-| **Orange** | **4** | 4 | Two gate pairs, one per fork. Not reducible — see below |
-| **Green** | **1** | 1 | The goal |
-| | **41** | **31** | |
+| **Red** | **4** | 4 | Two gate pairs, one per fork. Not reducible — see below |
+| **Orange** | **2** | 2 | The middle cone of each dead-end end wall |
+| **Magenta** | **1** | 1 | The goal |
+| | **43** | **33** | |
 
 Full build uses 1.5 m spacing on straights; the minimum stretches straights to
 2 m and keeps 0.75 m through the fork mouths. Cut from the straights, never the
 forks — straights are the part the corridor layer extrapolates well, and the
 forks are where boundary ambiguity actually bites.
 
-**Orange does not scale down.** `gate_detect.py` keys on *pairs*, and
-`GateEvent.distance` is the range to a gate's midpoint, so a lone orange cone is
-not a weak gate — it is an undetectable one. With only two orange cones, mark one
+**Red does not scale down.** `gate_detect.py` keys on *pairs*, and
+`GateEvent.distance` is the range to a gate's midpoint, so a lone red cone is
+not a weak gate — it is an undetectable one. With only two red cones, mark one
 junction properly and leave the other unmarked rather than splitting a pair
 across both.
 
 **Buy spares of blue and yellow** (2–3 each). Cones get run over.
 
-**Consider 2 extra orange and 2 extra green** beyond the track. They are not for
-the layout — they are for the cone-zoo capture session. The track carries ~36
-boundary cones against 4 orange and 1 green, and that imbalance is the single
-biggest threat to the detector on exactly the two classes that trigger state
-transitions. Extra cones let you stage them at many ranges at once.
+**Consider 2 extra each of red, orange and magenta** beyond the track. They are
+not for the layout — they are for the cone-zoo capture session. The track carries
+~36 boundary cones against 4 red, 2 orange and 1 magenta, and that imbalance is
+the single biggest threat to the detector on exactly the three classes that
+trigger state transitions. Extra cones let you stage them at many ranges at once.
+
+Red and orange are also the closest colors on the track, so shoot them *together*
+in the same frame at several ranges. A detector that separates them at 2 m and
+merges them at 8 m is the failure that matters, and it only shows up if both are
+in shot.
 
 ### Dead-end end walls
 
 Each dead end is walled across its 1.5 m width. The two corner positions are
 already the last cones of the side walls, so each dead end needs exactly **one
 additional cone in the middle** — otherwise the 1.5 m gap reads as corridor and
-the car will try to drive through it. The colour of that middle cone does not
-matter to the detector; for a deterministic spec, continue the blue (left) wall
-around. Do **not** use orange for a dead-end wall: it would fire a false gate.
+the car will try to drive through it. That middle cone is **orange**: the dead
+end is a class of its own, so a stub is recognisable as a stub rather than
+inferred from a gap that failed to open.
+
+Do **not** use red for a dead-end wall — it would fire a false gate, and red is
+the colour orange is most likely to be confused with in the first place.
 
 ## Cone colors at a fork
 
@@ -110,7 +120,7 @@ Each branch keeps blue-left / yellow-right **in its own direction of travel**.
 That resolves the island between the branches automatically: its left face (the
 left branch's right wall) is yellow, its right face (the right branch's left
 wall) is blue. Build the island nose as one yellow and one blue cone side by
-side, then taper outward. No fifth class, no ambiguity.
+side, then taper outward. No extra class, no ambiguity.
 
 ## Cone height
 
@@ -133,9 +143,9 @@ Record into `track_v1.csv` with columns:
 id,color,x_m,y_m,segment
 ```
 
-where `color` is one of `blue`, `yellow`, `orange`, `green` and matches the class
-names used in Roboflow. The CSV holds **measured** positions, not the design
-numbers above — lay the track out from this document with a tape, then record
+where `color` is one of `blue`, `yellow`, `red`, `orange`, `magenta` and matches
+the class names used in Roboflow. The CSV holds **measured** positions, not the
+design numbers above — lay the track out from this document with a tape, then record
 where the cones actually ended up. Photograph the finished track from a fixed
 vantage and note where that vantage was, so a rebuild can be checked against the
 photo.
@@ -150,7 +160,7 @@ the camera sees two blue walls and two yellow walls at once, so a naive "all blu
 cones are my left boundary" rule in `cone_nav/corridor/boundary_split.py` will
 fuse two corridors into nonsense.
 
-That is what the orange gate pair is for. `EVENT_GATE_IN_RANGE` is the trigger to
+That is what the red gate pair is for. `EVENT_GATE_IN_RANGE` is the trigger to
 hand off from centerline-following to `cone_nav/guidance/junction_exec.py`, which
 uses the provided route to pick which branch's cones to keep. Write the corridor
 layer knowing it will sometimes see two corridors, not one.

@@ -6,8 +6,8 @@
 #
 # Frame: origin at the midpoint of the start line, x forward along Corridor A,
 # y left, meters. Measure to cone BASE CENTERS.
-# color is one of: blue | yellow | orange | green  (must match the Roboflow
-# class names and the constants in cone_msgs/msg/LabeledCone.msg)
+# color is one of: blue | yellow | red | orange | magenta  (must match the
+# Roboflow class names and the constants in cone_msgs/msg/LabeledCone.msg)
 #
 # segment: which part of the track the cone belongs to, for plotting and for
 # slicing ground truth per corridor. One of:

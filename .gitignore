@@ -19,6 +19,14 @@ log/
 model/dataset/images/*
 !model/dataset/images/.gitkeep
 
+# Roboflow exports: re-downloadable, and the images in them are the same
+# gigabytes we already keep out. roboflow_export.py syncs the labels, the
+# class list and manifest.json into model/dataset/labels/, which IS in git.
+model/dataset/export/
+
+# Ultralytics writes here if a run is launched without --project
+model/training/runs/
+
 # Commit stamp written by model/capture/deploy.sh at deploy time
 model/capture/VERSION
 

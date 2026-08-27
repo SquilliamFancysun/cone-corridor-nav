@@ -1,1 +1,1 @@
-"""Orange cones -> left / right boundary groups. Pure function, no rclpy."""
+"""Blue / yellow cones -> left / right boundary groups. Pure function, no rclpy."""

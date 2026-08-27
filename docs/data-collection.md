@@ -21,8 +21,8 @@ cannot open the OAK-D. `myconfig_capture.py` handles that.
 ## 0. What to bring
 
 - The car, a charged LiPo, and the battery alarm
-- **41 cones** for a full track v1 build, or 31 for the minimum: 18 blue,
-  18 yellow, 4 orange, 1 green. Counts and what to cut are in
+- **43 cones** for a full track v1 build, or 33 for the minimum: 18 blue,
+  18 yellow, 4 red, 2 orange, 1 magenta. Counts and what to cut are in
   [`data/layouts/track_v1.md`](../data/layouts/track_v1.md) — cut from the
   straights, never the forks.
 - F710 gamepad **and its USB receiver**, switch set to **X**
@@ -86,7 +86,7 @@ hostname -I                     # note the IP; Foxglove needs it, not the ssh al
 ## 3. Build and survey the track
 
 Build the layout in [`data/layouts/track_v1.md`](../data/layouts/track_v1.md):
-a corridor with two Y-junctions, branches at ±25°, ending at the green goal.
+a corridor with two Y-junctions, branches at ±25°, ending at the magenta goal.
 
 Then **survey it before you drive it.** Fix the convention first and write it on
 the sheet: origin at the midpoint of the start line, x forward along Corridor A,

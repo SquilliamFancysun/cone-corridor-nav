@@ -2,12 +2,19 @@
 
 _Deliverable D1. Fill in as the dataset is built; don't retrofit at the end._
 
+`prepare_dataset.py` prints the session table after a cull, and
+`roboflow_export.py` prints the totals, per-class instance counts and split
+rows after an export — both in the shape this file wants. Paste those in rather
+than counting by hand; the numbers below should be measurements.
+
 ## Composition
 - Total images:
-- Per class instance counts: blue / yellow / orange / green:
-  - Watch the imbalance: the track carries ~38 boundary cones but only 4 orange
-    and 1 green. Keep shooting orange/green (cone-zoo sessions, slow junction
-    passes) until they are within roughly 3:1 of the boundary classes.
+- Per class instance counts: blue / yellow / red / orange / magenta:
+  - Watch the imbalance: the track carries ~36 boundary cones but only 4 red,
+    2 orange and 1 magenta. Keep shooting those three (cone-zoo sessions, slow
+    junction passes) until they are within roughly 3:1 of the boundary classes.
+  - Red and orange are also the pair the detector is most likely to confuse, so
+    they need range and lighting diversity, not just raw counts.
 - Split: train / val / test (by *capture session*, not random-by-image, so the
   test set is genuinely unseen conditions). Hold back a whole lighting
   condition rather than skimming frames off each one:
