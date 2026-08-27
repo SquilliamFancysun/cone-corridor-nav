@@ -148,16 +148,35 @@ points at the 5 V rail (the hub, not the Pi), CRC failures point at the cable.
 
 ### 4.4 Gamepad buttons
 
-The F710 renumbers its buttons between the X and D switch positions, so probe
-with the switch where you will actually drive:
+Two controls on the F710 change the mapping, and both must be set before you
+probe or the indices will not match what you get while driving:
+
+- the **X/D slider** — use **X**
+- the **MODE button** — its green LED must be **off**, otherwise the left stick
+  and the D-pad swap and steering arrives as unmapped D-pad events
 
 ```bash
 python joystick.py --probe-buttons
 ```
 
-Defaults are **A (0)** for the camera and **B (1)** for the lidar, deliberately
-different so one pad drives both tools. If your indices differ, pass
-`--record-button N` to each tool.
+Both tools default to **X (2)**. Expect `X=2, A=0, B=1, start=7`; if yours
+differ, pass `--record-button N` to each tool.
+
+> **Never bind either tool to A or B.** All three processes read
+> `/dev/input/js0` and every one of them sees the same press. DonkeyCar binds
+> **A to emergency_stop** and **B to toggle_manual_recording**, so a record
+> toggle on A E-stops the car mid-run, and one on B writes junk MockCamera tubs
+> beside your session. X is unbound in DonkeyCar's map, which is why it is the
+> default.
+
+DonkeyCar's own bindings, for reference:
+
+| Action | Button |
+|---|---|
+| Mode switch | start |
+| Emergency stop | A |
+| Toggle manual recording | B |
+| Erase last N records | Y |
 
 ### 4.5 Camera preview — and actually look at it
 
@@ -269,9 +288,13 @@ chassis, not obstacles.
 
 ## 7. Record a session
 
-Press **A** to start and stop the camera; **B** for the lidar. Both toggle, and
-both keep one session directory per run of the script — the button pauses and
-resumes within it. That is deliberate: a session means one set of conditions.
+Press **X** to start and stop. Both tools default to that same button, so one
+press begins and ends the camera and lidar sessions together and the two stay
+aligned. Both toggle, and both keep one session directory per run of the script
+— the button pauses and resumes within it. That is deliberate: a session means
+one set of conditions.
+
+If you want them independent, give one of them a different `--record-button`.
 
 Drive the corridor. Vary approach angles and speeds; cover both branches at both
 junctions, including the dead ends.

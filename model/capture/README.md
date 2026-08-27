@@ -83,7 +83,12 @@ session and writes `session.json`.
 2. `python joystick.py --probe-buttons`, press the button you want, pass the
    index it prints as `--record-button N`. The F710 renumbers its buttons
    between the X and D switch positions, so probe with the switch where you
-   will actually drive.
+   will actually drive — and with the MODE LED off, which swaps the left stick
+   and the D-pad.
+
+   **Do not use A or B.** Every process reading `/dev/input/js0` sees the same
+   press, and DonkeyCar binds A to emergency_stop and B to its own tub
+   recorder. Both tools default to X (2), which DonkeyCar leaves unbound.
 3. `python capture_cones.py --preview --out /tmp/preview.jpg`, then `scp` it
    back **and look at it**: right colors, expected framing, and is a cone at 5 m
    more than ~20 px tall?
@@ -111,7 +116,7 @@ for dataset capture.
 | `--session-label` | `session` | Describes the conditions. Becomes the directory name and the Roboflow batch name |
 | `--rate` | 2 | Frames saved per second |
 | `--camera-fps` | 10 | Sensor rate. Deliberately faster than `--rate` so auto-exposure stays responsive |
-| `--record-button` | 0 | Toggle button index |
+| `--record-button` | 2 | X. DonkeyCar binds A to E-Stop and B to its tub recorder |
 | `--no-joystick --duration N` | — | Record without a gamepad, for smoke tests |
 | `--resolution` | `1080p` | Or `4k` |
 | `--notes` | — | Free text into `session.json` |
@@ -233,7 +238,7 @@ is fixable at a desk instead of re-driven.
 | Flag | Default | |
 |---|---|---|
 | `--session-label` | `session` | Describes the conditions; becomes the directory name |
-| `--record-button` | 1 | B on the F710 — off the camera tool's A, so one pad drives both |
+| `--record-button` | 2 | X — the same button the camera tool uses, so one press records both |
 | `--mirror` / `--angle-offset` | — | Set from the cone check above |
 | `--mount-x/-y/-z/--mount-yaw` | 0 | Lidar position in `base_link`, metres and degrees |
 | `--bins` | 450 | Angular bins for the drawn scan, ~0.8° |

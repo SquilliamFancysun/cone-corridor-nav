@@ -217,6 +217,21 @@ D mode) and re-enumerates as `046d:c21f` (XInput, X mode) a few seconds into boo
 Button indices differ between switch positions. _Tell:_ run
 `joystick.py --probe-buttons` with the switch where you will actually drive.
 
+**The F710's MODE button swaps the left stick and the D-pad.** With its green LED
+lit, pushing the left stick emits D-pad events, so steering silently stops
+working while throttle on the right stick keeps going. Nothing in the DonkeyCar
+config is wrong when this happens. _Tell:_ `ERROR: dpad left un-mapped` in the
+DonkeyCar log while you are moving the *stick*. Press MODE until the LED is out.
+This is a separate control from the X/D slider; both change the mapping.
+
+**Every process on the pad sees every press.** joydev gives each open file its own
+event stream, which is what lets DonkeyCar, `capture_cones.py` and
+`lidar_view.py` share one gamepad — but a button bound in two places fires both
+handlers. DonkeyCar binds **A to emergency_stop** and **B to
+toggle_manual_recording**, so a capture tool on either would E-stop the car or
+write junk tubs on every record toggle. _Rule:_ capture tools use **X (2)**,
+which DonkeyCar leaves unbound. Verified indices: `X=2, A=0, B=1, start=7`.
+
 **Deploy stamps the commit by hand.** The car has no git clone, so `deploy.sh`
 writes `HEAD` into `VERSION` and `capture_cones.py` copies that into every
 `session.json`. Amend or rebase after deploying and the recorded commit becomes

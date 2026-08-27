@@ -286,9 +286,10 @@ def parse_args(argv=None):
     parser.add_argument("--mount-z", type=float, default=0.0)
     parser.add_argument("--mount-yaw", type=float, default=0.0, help="degrees")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="joystick device node")
-    parser.add_argument("--record-button", type=int, default=1,
-                        help="joystick button that toggles recording; 1 = B, kept "
-                             "off capture_cones.py's A so both tools can share a pad")
+    parser.add_argument("--record-button", type=int, default=2,
+                        help="joystick button that toggles recording; 2 = X, the same "
+                             "button capture_cones.py uses, so one press starts and "
+                             "stops both sensors together (default: 2)")
     parser.add_argument("--no-joystick", action="store_true",
                         help="record immediately without a gamepad; needs --duration")
     parser.add_argument("--duration", type=float, default=None,
