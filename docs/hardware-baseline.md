@@ -158,7 +158,14 @@ print(d.getUsbSpeed().name, d.getConnectedCameras())"
 
 ### 3. Lidar is streaming, not just enumerated
 
-Read the port directly and decode the LD06 frame header. Healthy baseline:
+On the car, this is now one command — it checks every number below and names
+the likely cause when one is off:
+
+```bash
+cd ~/cone_capture_tool && python lidar_view.py --selftest
+```
+
+The equivalent by hand, if the tool is not deployed yet. Healthy baseline:
 ~19 KB/s, ~400 frames/s, rotation 9.9–10.1 Hz, packets starting `54 2c`.
 
 ```python
@@ -229,7 +236,13 @@ scan geometry.
 | Capture tool | `~/cone_capture_tool/` | Pushed by `deploy.sh`; commit stamped in `VERSION` |
 | Drive config | `~/mycar/myconfig_capture.py` | `CAMERA_TYPE="MOCK"` so DonkeyCar releases the OAK-D |
 | Sessions | `~/cone_capture/` | 28 G free, ~200 MB per 4-minute session |
+| Lidar sessions | `~/lidar_capture/` | ~5 MB per minute (MCAP + JSONL) |
 | ROS 2 | container `robocar_team2` | Class container; not required for dataset capture |
+
+**Lidar ownership.** Same rule, different device: only one process can hold the
+CP2102. `lidar_view.py` and the ROS container's lidar driver are mutually
+exclusive. The lidar does not contend with the camera, so driving, image capture
+and lidar capture all run at once.
 
 **Camera ownership.** Only one process can hold the OAK-D. During capture
 DonkeyCar runs as the drive-by-wire stack only — it reads the F710 and drives the

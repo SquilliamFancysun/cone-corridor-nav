@@ -1,8 +1,12 @@
-"""Session bookkeeping for cone capture: directory naming, frame pacing, manifest.
+"""Session bookkeeping for capture: directory naming, frame pacing, manifests.
 
-Pure Python, no depthai. capture_cones.py owns the camera and hands frames to
-this module, which means everything here is exercisable by pytest on a laptop
-with no car attached.
+Pure Python, no depthai, no pyserial, no foxglove. capture_cones.py owns the
+camera and lidar_view.py owns the lidar; both hand data to this module, which
+means everything here is exercisable by pytest on a laptop with no car attached.
+
+Both sensors share the session naming and manifest shape on purpose: a camera
+session and a lidar session recorded on the same run should be recognisably the
+same thing, and provenance should look identical in both.
 """
 
 import json
@@ -86,23 +90,66 @@ def git_commit(path=None):
     return out.stdout.strip() or None if out.returncode == 0 else None
 
 
-class SessionWriter:
+class _SessionBase:
+    """Shared skeleton: the directory, the meta, and the provenance block.
+
+    Split out so the lidar and camera manifests cannot drift apart in the parts
+    that identify a run — only in the parts that describe a sensor.
+    """
+
+    tool_name = "unknown"
+
+    def __init__(self, root, label, meta=None, when=None):
+        self.name = session_dir_name(label, when)
+        self.label = label
+        self.dir = os.path.join(os.path.expanduser(root), self.name)
+        self.meta = dict(meta or {})
+        self.closed = False
+
+    def _header(self, notes):
+        return {
+            "session": self.name,
+            "label": self.label,
+            "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "tool": {
+                "name": self.tool_name,
+                "version": TOOL_VERSION,
+                "git_commit": self.meta.get("git_commit") or git_commit(),
+            },
+            "capture": {k: v for k, v in self.meta.items() if k != "git_commit"},
+            "notes": notes,
+        }
+
+    def _write_manifest(self, notes):
+        with open(os.path.join(self.dir, "session.json"), "w") as fh:
+            json.dump(self.manifest(notes), fh, indent=2)
+            fh.write("\n")
+        self.closed = True
+        return self.dir
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
+class SessionWriter(_SessionBase):
     """Writes one capture session: frames/*.jpg plus a session.json manifest.
 
     Frames are written as they arrive rather than buffered, so a session that
     ends in a crash or a yanked battery still leaves usable images behind.
     """
 
+    tool_name = "capture_cones.py"
+
     def __init__(self, root, label, meta=None, when=None):
-        self.name = session_dir_name(label, when)
-        self.label = label
-        self.dir = os.path.join(os.path.expanduser(root), self.name)
+        super().__init__(root, label, meta, when)
         self.frames_dir = os.path.join(self.dir, "frames")
         os.makedirs(self.frames_dir, exist_ok=False)
-        self.meta = dict(meta or {})
         self.frames = []
         self._t0 = None
-        self.closed = False
 
     @property
     def count(self):
@@ -124,37 +171,105 @@ class SessionWriter:
         return filename
 
     def manifest(self, notes=None):
-        capture = {k: v for k, v in self.meta.items() if k != "git_commit"}
-        return {
-            "session": self.name,
-            "label": self.label,
-            "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "tool": {
-                "name": "capture_cones.py",
-                "version": TOOL_VERSION,
-                "git_commit": self.meta.get("git_commit") or git_commit(),
-            },
+        manifest = self._header(notes)
+        manifest.update({
             "classes": list(CLASS_NAMES),
-            "capture": capture,
-            "notes": notes,
             "frame_count": len(self.frames),
             "duration_s": round(self.frames[-1]["t"], 3) if self.frames else 0.0,
             "frames": self.frames,
-        }
+        })
+        # Key order is load-bearing only for readability: classes and capture
+        # come before the long per-frame list.
+        ordered = ("session", "label", "created_utc", "tool", "classes",
+                   "capture", "notes", "frame_count", "duration_s", "frames")
+        return {k: manifest[k] for k in ordered}
 
     def close(self, notes=None):
         """Write session.json. Safe to call twice; the second call is a no-op."""
         if self.closed:
             return self.dir
-        with open(os.path.join(self.dir, "session.json"), "w") as fh:
-            json.dump(self.manifest(notes), fh, indent=2)
-            fh.write("\n")
-        self.closed = True
-        return self.dir
+        return self._write_manifest(notes)
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, exc_type, exc, tb):
-        self.close()
-        return False
+class ScanSessionWriter(_SessionBase):
+    """Writes one lidar session: scans.jsonl plus a session.json manifest.
+
+    The MCAP alongside it is written by foxglove's own sink, which is why this
+    class does not know about it — session.py stays importable with nothing
+    installed. Scans are appended as they arrive, same rationale as add_frame:
+    a yanked battery costs the last scan, not the session.
+
+    scans.jsonl is deliberately redundant with the MCAP's raw channel. It is
+    the zero-dependency path: the replay harness and a quick `python -c` on any
+    machine can read it without foxglove or mcap installed.
+    """
+
+    tool_name = "lidar_view.py"
+
+    def __init__(self, root, label, meta=None, when=None, jsonl=True):
+        super().__init__(root, label, meta, when)
+        os.makedirs(self.dir, exist_ok=False)
+        self.count = 0
+        self.health = {}
+        self._t0 = None
+        self._last_t = 0.0
+        self._speeds = []
+        self._jsonl = open(os.path.join(self.dir, "scans.jsonl"), "w") if jsonl else None
+
+    @property
+    def jsonl_path(self):
+        return os.path.join(self.dir, "scans.jsonl")
+
+    @property
+    def mcap_path(self):
+        return os.path.join(self.dir, "scans.mcap")
+
+    def add_scan(self, scan):
+        """Append one revolution. Returns its time relative to the first scan."""
+        if self.closed:
+            raise RuntimeError("session already closed")
+        if self._t0 is None:
+            self._t0 = scan.t
+        t = round(scan.t - self._t0, 4)
+        self._last_t = t
+        self.count += 1
+        self._speeds.append(scan.speed_hz)
+        if self._jsonl is not None:
+            json.dump({
+                "t": t,
+                "speed_hz": round(scan.speed_hz, 3),
+                # 0.01 deg is the sensor's own resolution; more digits would be
+                # invented precision and a third larger on disk.
+                "angles_deg": [round(a, 2) for a in scan.angles_deg],
+                "ranges_mm": list(scan.ranges_mm),
+                "intensities": list(scan.intensities),
+            }, self._jsonl, separators=(",", ":"))
+            self._jsonl.write("\n")
+        return t
+
+    def set_health(self, **stats):
+        """Link health for the manifest: packet counts, CRC drops, throughput.
+
+        Recorded per session so a run that looks wrong later can be checked
+        against the baseline in docs/hardware-baseline.md without guessing.
+        """
+        self.health.update(stats)
+
+    def manifest(self, notes=None):
+        manifest = self._header(notes)
+        speeds = self._speeds
+        manifest.update({
+            "scan_count": self.count,
+            "duration_s": round(self._last_t, 3),
+            "mean_rotation_hz": round(sum(speeds) / len(speeds), 3) if speeds else 0.0,
+            "health": self.health,
+        })
+        return manifest
+
+    def close(self, notes=None):
+        """Write session.json and close the jsonl. Safe to call twice."""
+        if self.closed:
+            return self.dir
+        if self._jsonl is not None:
+            self._jsonl.close()
+        return self._write_manifest(notes)

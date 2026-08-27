@@ -1,9 +1,37 @@
 # Cone capture
 
-Gamepad-triggered image capture from the OAK-D Lite, for building the D1
-dataset. Runs on the Pi; no ROS involved.
+Two on-car tools, both gamepad-triggered, both running on the Pi with no ROS
+involved:
 
-## Why it is not a ROS node
+- **`capture_cones.py`** — image capture from the OAK-D Lite, for building the
+  D1 dataset.
+- **`lidar_view.py`** — live Foxglove view of the LD06 plus scan recording, for
+  developing the centerfinding algorithm against real track data.
+
+They own different devices, so they run side by side.
+
+## Deploy
+
+```
+./deploy.sh            # defaults to the `robocar` ssh host
+```
+
+Copies both tools to `~/cone_capture_tool/`, `myconfig_capture.py` to
+`~/mycar/`, and stamps the git commit into `VERSION` (the car has no clone, so
+the commit recorded in each `session.json` comes from there).
+
+Commit first, then deploy, then capture. Amending or rebasing after a deploy
+makes the commit in every `session.json` unreachable and silently breaks
+provenance.
+
+Nothing to install for the camera: `depthai`, `cv2` and `donkeycar` are already
+in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants
+an SDL video driver we do not have over SSH). The lidar tool wants one package —
+see [Install](#install) below.
+
+## Camera: images for the dataset
+
+### Why it is not a ROS node
 
 The dataset is an off-car deliverable. Going through `image_transport` and a
 rosbag would add a lossy re-encode, couple capture rate to topic rate, and
@@ -12,7 +40,7 @@ here *is* good for is being copied: the DepthAI configuration in
 `capture_cones.py` is the reference the deployed `cone_perception/yolo_node.py`
 should match, so the detector sees at inference the same colors it trained on.
 
-## The camera-ownership problem
+### The camera-ownership problem
 
 Only one process can hold the OAK-D. DonkeyCar's `OakD` part claims it and
 hardcodes 640x480 (`donkeycar/parts/oak_d.py:31`), which is both too small and
@@ -26,21 +54,7 @@ drives the VESC — with `CAMERA_TYPE="MOCK"` so it never opens the camera.
 Both processes read `/dev/input/js0` at once, which is fine: joydev gives each
 open file its own event stream.
 
-## Deploy
-
-```
-./deploy.sh            # defaults to the `robocar` ssh host
-```
-
-Copies the tool to `~/cone_capture_tool/`, `myconfig_capture.py` to `~/mycar/`,
-and stamps the git commit into `VERSION` (the car has no clone, so the commit
-recorded in each `session.json` comes from there).
-
-Nothing to install: `depthai`, `cv2` and `donkeycar` are already in `~/env`, and
-`joystick.py` avoids `evdev` (not installed) and `pygame` (wants an SDL video
-driver we do not have over SSH).
-
-## Run
+### Run
 
 Two panes on the car:
 
@@ -98,7 +112,7 @@ for dataset capture.
 | `--resolution` | `1080p` | Or `4k` |
 | `--notes` | — | Free text into `session.json` |
 
-## Output
+### Output
 
 ```
 ~/cone_capture/20260826_1432_lot-sun-A/
@@ -114,14 +128,152 @@ Roughly 2 Hz x 4 minutes = 480 frames = 200 MB. The card has 29 GB free.
 
 Pull and cull with `../dataset/prepare_dataset.py --pull robocar`.
 
+## Lidar: live view and recording
+
+`lidar_view.py` streams the LD06 to Foxglove Studio on the laptop and records
+scans on a button press. The live view is always on; the button only gates
+recording, because watching the scan is how you decide whether a run is worth
+recording at all.
+
+### Why it is not a ROS node either
+
+Same reason as the camera tool, plus one more. A rosbag needs ROS to replay,
+and the point of these recordings is the pure-Python replay harness in `sim/` —
+Person B develops centerfinding on a laptop with no ROS installed. `ld06.py`
+decodes the wire format into a plain `Scan`, which is what
+`cone_perception/lidar_cluster.py` consumes; when the nav stack does want the
+lidar as a topic, that node is a thin `rclpy` wrapper, not a second decoder.
+
+**Only one process may hold the serial port.** Do not run the container's lidar
+driver at the same time as this. Unlike the camera, though, the lidar does not
+contend with DonkeyCar, so driving, image capture and lidar capture all run at
+once.
+
+### Install
+
+```
+~/env/bin/pip install foxglove-sdk        # needs Python 3.10+
+```
+
+`pyserial` is already there (donkeycar depends on it). Without `foxglove-sdk`
+the tool still records `scans.jsonl` and says so — a failed install at the track
+should not cost the data run.
+
+### Preflight
+
+```
+python lidar_view.py --selftest
+```
+
+Three seconds of link statistics checked against
+[`docs/hardware-baseline.md`](../../docs/hardware-baseline.md): ~19 KB/s, ~400
+packets/s, 9.9–10.1 Hz, CRC drops near zero. It exits non-zero and names the
+likely cause if any of those are off, so it doubles as the lidar half of
+re-verification. A spinning motor proves nothing — a charge-only micro-USB cable
+powers the LD06 while carrying no data at all.
+
+### Run
+
+```
+source ~/env/bin/activate && cd ~/cone_capture_tool
+python lidar_view.py --session-label lot-A
+```
+
+Then in Foxglove Studio: **Open connection → Foxglove WebSocket →
+`ws://robocar:8765`**. Add a 3D panel for `/scan` and a Raw Messages panel for
+`/lidar_status`.
+
+| Topic | What |
+|---|---|
+| `/scan` | The scan you look at, binned to `--bins` equal steps |
+| `/scan_raw` | Lossless per-point bearings, so the MCAP is not a downgrade |
+| `/tf` | `base_link` → `lidar` from the mount flags |
+| `/lidar_status` | Rotation Hz, packets/s, CRC drop rate, live |
+
+### Angle convention — calibrate it, do not reason about it
+
+The one piece of geometry that can be wrong while every number on screen looks
+reasonable. Three unknowns feed the bearing:
+
+1. **Native direction.** The LD06's bearing increases clockwise viewed from
+   above. Foxglove and ROS (REP-103) are x-forward, y-left, z-up, with angles
+   counterclockwise about +z. That is one negation, which the tool applies.
+2. **Mount orientation.** Mounting the unit upside down flips its y and z in the
+   car frame, so a return the sensor reports at y = +1 lands at y = −1 — the
+   same negation again. Inverted plus clockwise-native cancels back out. Two
+   independent sign bits, one net sign, which is what `--mirror` flips.
+3. **Yaw offset**, if the sensor's zero does not point forward: `--angle-offset`.
+
+Ranges are unaffected by any of this; only bearing is. The failure mode is a
+mirrored corridor — a cone on the left appears on the right, every range checks
+out, and the centerline steers into the wrong boundary at a junction.
+
+**The check.** One cone at 1.0 m, about 45° to the **left**, nothing else near:
+
+- Front-left (+x, +y) at 1.0 m → correct.
+- Front-**right** → the sign is inverted, add `--mirror`.
+- Right bearing but rotated → that is the yaw, set `--angle-offset`.
+
+A cone placed *directly ahead* cannot detect the mirror: a point on the x axis
+is its own reflection. Keep it off-axis. Then move it to 45° right and confirm
+it follows. Record the flags you ended up with here in this file so nobody
+re-derives them at a track:
+
+    verified mount flags: (fill in after the first run)
+
+Both flags land in `session.json`, so a session recorded with the sign backwards
+is fixable at a desk instead of re-driven.
+
+### Useful flags
+
+| Flag | Default | |
+|---|---|---|
+| `--session-label` | `session` | Describes the conditions; becomes the directory name |
+| `--record-button` | 1 | B on the F710 — off the camera tool's A, so one pad drives both |
+| `--mirror` / `--angle-offset` | — | Set from the cone check above |
+| `--mount-x/-y/-z/--mount-yaw` | 0 | Lidar position in `base_link`, metres and degrees |
+| `--bins` | 450 | Angular bins for the drawn scan, ~0.8° |
+| `--no-joystick --duration N` | — | Record without a gamepad, for smoke tests |
+| `--no-live` | — | Record with no Foxglove server |
+| `--selftest` | — | Link statistics, then exit |
+| `--dump-raw PATH` | — | Raw serial bytes, for building the test fixture |
+| `--notes` | — | Free text into `session.json` |
+
+### Output
+
+```
+~/lidar_capture/20260826_1432_lot-A/
+  scans.mcap     /scan + /scan_raw + /tf + /lidar_status; drag into Foxglove
+  scans.jsonl    one revolution per line, no dependencies to read
+  session.json   port, angle convention, mount, link health, commit, notes
+```
+
+Roughly 2–3 MB/min each at 10 Hz. `scans.jsonl` is deliberately redundant with
+`/scan_raw`: it is the zero-dependency path for the replay harness and for a
+quick `python -c` on any machine. `--no-jsonl` turns it off.
+
+The first revolution of every session is discarded — the tool joins the stream
+mid-rotation, so that one is always partial, and a half scan reads downstream as
+a corridor that abruptly ends.
+
 ## Tests
 
-`session.py` is pure Python — naming, the sampling clock, manifest assembly —
-so the parts that can be wrong quietly are testable with no car:
+`session.py` and `ld06.py` are pure Python — naming, the sampling clock,
+manifest assembly, CRC, angle interpolation, the revolution boundary — so the
+parts that can be wrong quietly are testable with no car:
 
 ```
-uv run --with pytest python -m pytest test_session.py -q
+uv run --with pytest python -m pytest -q
 ```
 
-`joystick.py` and `capture_cones.py` need the hardware; verify those with
-`--probe-buttons` and `--preview` on the car.
+`test_ld06.py` synthesizes packets with real CRCs, which only proves the decoder
+agrees with itself. Two of its tests are skipped until a recorded fixture exists;
+make one on the car and commit it:
+
+```
+python lidar_view.py --dump-raw fixtures/ld06_sample.bin --no-joystick --duration 3
+```
+
+`joystick.py`, `capture_cones.py` and the serial half of `lidar_view.py` need the
+hardware; verify those with `--probe-buttons`, `--preview` and `--selftest` on
+the car.
