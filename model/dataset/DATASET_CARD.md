@@ -1,4 +1,4 @@
-# Dataset Card — Cone Detection (3 classes)
+# Dataset Card — Cone Detection (5 classes)
 
 _Deliverable D1. Fill in as the dataset is built; don't retrofit at the end._
 
