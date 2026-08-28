@@ -336,7 +336,7 @@ sun angle, surface, anything unusual. They go in
 
 ```bash
 cd model/dataset
-uv run --with pillow --with numpy python prepare_dataset.py --pull robocar
+python prepare_dataset.py --pull robocar
 ```
 
 This rsyncs sessions down, drops frames not worth a labeler's time (blurry, or

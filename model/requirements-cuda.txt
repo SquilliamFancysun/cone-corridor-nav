@@ -1,0 +1,18 @@
+# CUDA build of torch, for a machine with an NVIDIA GPU.
+#
+# Install this as its own pip command, before requirements.txt:
+#
+#   pip install -r requirements-cuda.txt
+#
+# Not combined with requirements.txt in a single invocation — --index-url
+# replaces PyPI for the whole run, and ultralytics and roboflow are not on the
+# PyTorch index.
+#
+# cu128 covers Ampere (sm_86, RTX 30-series) through Blackwell. `nvidia-smi`
+# reports the highest CUDA version your driver supports, which must be >= 12.8.
+# Other builds: https://pytorch.org/get-started/locally/
+
+--index-url https://download.pytorch.org/whl/cu128
+
+torch==2.9.1+cu128
+torchvision==0.24.1+cu128

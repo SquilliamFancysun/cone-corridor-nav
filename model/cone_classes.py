@@ -108,7 +108,7 @@ def load_data_yaml(path):
     except ImportError:
         raise SystemExit(
             "error: needs pyyaml to read data.yaml.\n"
-            "       uv run --with pyyaml ..."
+            "       pip install -r requirements.txt  (from model/)"
         )
     with open(path) as fh:
         doc = yaml.safe_load(fh)

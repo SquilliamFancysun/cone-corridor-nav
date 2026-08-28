@@ -14,13 +14,13 @@ the web uploader will not:
    the wrong place.
 
     export ROBOFLOW_API_KEY=...
-    uv run --with roboflow python roboflow_upload.py --workspace WS --project PROJ --dry-run
-    uv run --with roboflow python roboflow_upload.py --workspace WS --project PROJ
+    python roboflow_upload.py --workspace WS --project PROJ --dry-run
+    python roboflow_upload.py --workspace WS --project PROJ
 
 Only the *kept* frames go up — `_rejected/` is skipped, since those were culled
 precisely so nobody spends labeling time on them.
 
-Requires: roboflow.
+Requires the off-car venv: see ../requirements.txt.
 """
 
 import argparse
@@ -90,7 +90,7 @@ def connect(args):
     except ImportError:
         raise SystemExit(
             "error: needs the roboflow SDK.\n"
-            "       uv run --with roboflow python roboflow_upload.py ..."
+            "       pip install -r ../requirements.txt"
         )
     key = args.api_key or os.environ.get("ROBOFLOW_API_KEY")
     if not key:

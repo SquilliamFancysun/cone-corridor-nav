@@ -16,14 +16,15 @@ Images stay out of git; labels, the class list and the manifest are synced into
 `model/dataset/labels/`, which is committed.
 
     export ROBOFLOW_API_KEY=...
-    uv run --with roboflow --with pyyaml python roboflow_export.py \
+    python roboflow_export.py \
         --workspace WS --project PROJ --version 3
 
 Already have the export on disk?
 
-    uv run --with pyyaml python roboflow_export.py --location export/cone-3 --no-download
+    python roboflow_export.py --location export/cone-3 --no-download
 
-Requires: roboflow (to download), pyyaml. Pillow gets you the box-size stats.
+Requires the off-car venv: see ../requirements.txt. Only the roboflow SDK is
+needed to download; --no-download runs on pyyaml and pillow alone.
 """
 
 import argparse
@@ -54,7 +55,7 @@ def download(args):
     except ImportError:
         raise SystemExit(
             "error: needs the roboflow SDK to download.\n"
-            "       uv run --with roboflow --with pyyaml python roboflow_export.py ...\n"
+            "       pip install -r ../requirements.txt\n"
             "       (or pass --location <dir> --no-download for an export you already have)"
         )
     key = args.api_key or os.environ.get("ROBOFLOW_API_KEY")
@@ -440,7 +441,7 @@ def main(argv=None):
 
     print("\n" + "=" * 68)
     print("Export checks passed. Train with:\n")
-    print(f"  cd model/training && uv run --with ultralytics python train.py \\\n"
+    print(f"  cd model/training && python train.py \\\n"
           f"      --data {os.path.join(location, 'data.yaml')} --name v1")
     return 0
 

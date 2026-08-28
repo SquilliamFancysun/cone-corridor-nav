@@ -38,7 +38,7 @@ Decide the split in [`splits.json`](splits.json), then:
 ```bash
 export ROBOFLOW_API_KEY=...
 cd model/dataset
-uv run --with roboflow python roboflow_upload.py \
+python roboflow_upload.py \
     --workspace WS --project PROJ --dry-run     # then without --dry-run
 ```
 
@@ -74,7 +74,7 @@ interesting part.
 Roboflow's own Label Assist wants the model hosted there; we train locally, so:
 
 ```bash
-uv run --with ultralytics --with roboflow python roboflow_prelabel.py \
+python roboflow_prelabel.py \
     --weights ../training/v1/weights/best.pt \
     --session 20260827_1503_eli1 --workspace WS --project PROJ
 ```
@@ -99,7 +99,7 @@ whether v1 finds magenta at all before you spend upload quota finding out.
 Export YOLOv8 format, then pull it down with the script rather than by hand:
 
 ```bash
-uv run --with roboflow --with pyyaml --with pillow python roboflow_export.py \
+python roboflow_export.py \
     --workspace WS --project PROJ --version 3
 ```
 
@@ -118,7 +118,7 @@ recommended runner; `device=mps` on the Mac works for a smoke test.
 
 ```bash
 cd model/training
-uv run --with ultralytics python train.py \
+python train.py \
     --data ../dataset/export/PROJ-v3/data.yaml --name v1
 ```
 
@@ -158,7 +158,7 @@ confirm all five classes separate — particularly red vs. orange, and that
 magenta is found at all.
 
 ```bash
-uv run --with ultralytics python evaluate.py \
+python evaluate.py \
     --weights v1/weights/best.pt --data ../dataset/export/PROJ-v3/data.yaml \
     --split test --images ../dataset/images/<held-out-session>/frames
 ```

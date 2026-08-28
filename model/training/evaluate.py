@@ -15,13 +15,13 @@ it, and what this script produces:
 Everything lands in a markdown report next to the weights, because the report
 is a deliverable and reconstructing these numbers a week later is not fun.
 
-    uv run --with ultralytics python evaluate.py \
+    python evaluate.py \
         --weights v1/weights/best.pt --data ../dataset/export/cone-v3/data.yaml
 
-    uv run --with ultralytics python evaluate.py --weights v1/weights/best.pt \
+    python evaluate.py --weights v1/weights/best.pt \
         --data ... --images ../dataset/images/20260827_1053_lot-sun-A/frames
 
-Requires: ultralytics.
+Requires the off-car venv: see ../requirements.txt.
 """
 
 import argparse
@@ -58,7 +58,7 @@ def load_model(weights):
     except ImportError:
         raise SystemExit(
             "error: needs ultralytics.\n"
-            "       uv run --with ultralytics python evaluate.py ..."
+            "       pip install -r ../requirements.txt  (torch first — see that file)"
         )
     if not os.path.exists(weights):
         raise SystemExit(f"error: no weights at {weights}")

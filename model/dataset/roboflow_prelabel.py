@@ -12,7 +12,7 @@ card can honestly report which fraction of the set was machine-labeled and
 corrected — LABELING.md asks for that number, and the corrections are the
 interesting part.
 
-    uv run --with ultralytics --with roboflow python roboflow_prelabel.py \
+    python roboflow_prelabel.py \
         --weights ../training/v1/weights/best.pt --session 20260827_1503_eli1 \
         --workspace WS --project PROJ
 
@@ -20,7 +20,8 @@ interesting part.
 see whether v1 finds magenta at all, and whether it is telling red and orange
 apart, before spending upload quota on it.
 
-Requires: ultralytics, roboflow.
+Requires the off-car venv: see ../requirements.txt. The CUDA build of torch
+makes this pass over a full session a great deal less tedious.
 """
 
 import argparse
@@ -192,8 +193,7 @@ def main(argv=None):
     except ImportError:
         raise SystemExit(
             "error: needs ultralytics.\n"
-            "       uv run --with ultralytics --with roboflow python "
-            "roboflow_prelabel.py ..."
+            "       pip install -r ../requirements.txt  (torch first — see that file)"
         )
 
     args.device = pick_device(args.device)

@@ -10,11 +10,45 @@ evaluate.py   per-class metrics, confusion read-out, qualitative sweep
 <name>/       one directory per run: curves, results.csv, train_config.json
 ```
 
+## Setup
+
+Once per machine, from the repo root. The two pip lines are separate, and the
+order matters:
+
+```bash
+python -m venv .venv
+.venv\Scripts\Activate.ps1               # Windows; source .venv/bin/activate elsewhere
+pip install -r model/requirements-cuda.txt   # NVIDIA GPU only — do this first
+pip install -r model/requirements.txt
+```
+
+`requirements.txt` does not pin torch, because the build that is correct here is
+wrong on the next machine and the failure is silent. On Windows, plain
+`pip install torch` resolves to the CPU-only wheel PyPI serves for that
+platform: it imports cleanly, reports `torch.cuda.is_available() == False`, and
+leaves you with a run that is not obviously broken, only slow.
+`requirements-cuda.txt` pins the cu128 build instead. Skip it on Colab, which
+already ships a CUDA torch, and on Apple silicon, where `pip install torch
+torchvision` gets you MPS.
+
+Confirm it took before booking time on anything:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# 2.9.1+cu128 True
+```
+
+The two files are not combined into one `pip install`, because `--index-url`
+applies to the whole invocation and neither ultralytics nor roboflow is on the
+PyTorch index.
+
 ## Run it
+
+With the venv active:
 
 ```bash
 cd model/training
-uv run --with ultralytics python train.py \
+python train.py \
     --data ../dataset/export/<project>-v<N>/data.yaml --name v1
 ```
 
@@ -26,7 +60,7 @@ is a smoke test, not a run.
 Then the number that counts, on a session no training run has seen:
 
 ```bash
-uv run --with ultralytics python evaluate.py \
+python evaluate.py \
     --weights v1/weights/best.pt \
     --data ../dataset/export/<project>-v<N>/data.yaml --split test
 ```

@@ -15,15 +15,18 @@ Four of them, and each has already cost someone a run somewhere:
 * **Provenance written next to the weights** — commit, dataset export, library
   versions. The curves are deliverable D2 and an unattributable curve is not.
 
-    uv run --with ultralytics python train.py \
+    python train.py \
         --data ../dataset/export/cone-v3/data.yaml --name v1
 
-    uv run --with ultralytics python train.py --data ... --name v1 --dry-run
+    python train.py --data ... --name v1 --dry-run
 
 Horizontal flip stays on: the class is the cone's color, and left/right corridor
 semantics are resolved in cone_nav, not by the detector.
 
-Requires: ultralytics.
+Requires the off-car venv: see ../requirements.txt, and install torch from
+../requirements-cuda.txt first if this machine has an NVIDIA GPU. A CPU-only
+torch does not error here — pick_device() falls back to CPU and the run is not
+obviously broken, only slow, which is easy to mistake for a big dataset.
 """
 
 import argparse
@@ -222,7 +225,7 @@ def main(argv=None):
     except ImportError:
         raise SystemExit(
             "error: needs ultralytics.\n"
-            "       uv run --with ultralytics python train.py --data ... --name ..."
+            "       pip install -r ../requirements.txt  (torch first — see that file)"
         )
 
     stamp = stamp_provenance(run_dir, config, args, class_names)
@@ -253,7 +256,7 @@ def main(argv=None):
     print("Commit results.csv, args.yaml, train_config.json and the curves. Weights\n"
           "are gitignored — attach best.pt to a GitHub Release.\n")
     print("Then the number that actually counts, on the held-out session:\n")
-    print(f"  uv run --with ultralytics python evaluate.py \\\n"
+    print(f"  python evaluate.py \\\n"
           f"      --weights {os.path.join(run_dir, 'weights', 'best.pt')} \\\n"
           f"      --data {os.path.abspath(args.data)} --split test")
     return 0
