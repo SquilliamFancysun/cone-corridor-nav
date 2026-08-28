@@ -110,18 +110,36 @@ def image_size(path):
 
 
 def read_boxes(label_path):
-    """[(cls, w, h)] from a YOLO txt. Malformed lines are reported, not skipped silently."""
+    """[(cls, w, h)] from a YOLO txt, box rows and polygon rows alike.
+
+    Roboflow exports a segmentation-style row -- `cls x1 y1 x2 y2 ...` -- when the
+    annotations are polygons, which is what its Smart Polygon tool produces even
+    in a detection project. Reading parts[3:5] as a width and height there is not
+    a crash, it is a wrong number: those are the second vertex's coordinates. The
+    box-size percentiles this feeds go into DATASET_CARD.md, so a silently wrong
+    one is worse than a refusal.
+
+    Polygons are reduced to their bounding extents, which is exactly what
+    ultralytics does when it trains a detector on segment labels -- so the numbers
+    reported here describe the boxes the model will actually be trained on.
+    """
     boxes, bad = [], 0
     with open(label_path) as fh:
         for line in fh:
             parts = line.split()
             if not parts:
                 continue
-            if len(parts) < 5:
-                bad += 1
-                continue
             try:
-                boxes.append((int(float(parts[0])), float(parts[3]), float(parts[4])))
+                cls = int(float(parts[0]))
+                if len(parts) == 5:
+                    boxes.append((cls, float(parts[3]), float(parts[4])))
+                elif len(parts) > 5 and len(parts) % 2 == 1:
+                    # cls + an even number of coordinates: a polygon.
+                    xs = [float(v) for v in parts[1::2]]
+                    ys = [float(v) for v in parts[2::2]]
+                    boxes.append((cls, max(xs) - min(xs), max(ys) - min(ys)))
+                else:
+                    bad += 1
             except ValueError:
                 bad += 1
     return boxes, bad
