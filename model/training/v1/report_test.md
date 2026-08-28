@@ -1,7 +1,7 @@
 # Evaluation — v1/weights/best.pt
 
 - split: `test`
-- data: `/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1/data.yaml`
+- data: `dataset/export/cone-detector-nfjog-v1/data.yaml`
 - device: `mps`, imgsz 640
 
 ## Per-class metrics (test)

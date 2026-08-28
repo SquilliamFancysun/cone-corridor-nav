@@ -36,7 +36,7 @@ from cone_classes import resolve_class_names, staged_name  # noqa: E402
 from runtime import pick_device  # noqa: E402
 from roboflow_upload import (DEFAULT_IMAGES_DIR, DEFAULT_SPLITS_FILE, connect,  # noqa: E402
                              kept_frames, load_splits)
-from cone_classes import read_uploaded  # noqa: E402
+from cone_classes import read_uploaded, record_uploaded  # noqa: E402
 
 PRELABEL_DIRNAME = "_prelabel"
 
@@ -170,7 +170,7 @@ def upload_pairs(project, session, split, pairs, args, class_names):
         print(f"  FAILED {name}: {err}")
     if len(failed) > 5:
         print(f"  ... and {len(failed) - 5} more failures")
-    return ok, len(failed)
+    return ok, failed
 
 
 def main(argv=None):
@@ -251,7 +251,18 @@ def main(argv=None):
         if pairs and not args.no_upload:
             ok, failed = upload_pairs(project, session, split, pairs, args, class_names)
             total_ok += ok
-            total_failed += failed
+            total_failed += len(failed)
+            if ok:
+                # Proposals are uploads too. Without this the next round -- v2
+                # proposing over what v1 already covered -- would land a second
+                # set of machine boxes on frames a human has just finished
+                # correcting, which is the same burial this skip exists to stop.
+                failed_names = {name for name, _ in failed}
+                sent = [p for p, image_name, _ in pairs
+                        if image_name not in failed_names]
+                total = record_uploaded(session_dir, sent, split)
+                print(f"  recorded {len(sent)} frames in {session}/uploaded.json "
+                      f"({total} total)")
 
     print("\n" + "=" * 68)
     if args.no_upload:
