@@ -238,11 +238,23 @@ writes `HEAD` into `VERSION` and `capture_cones.py` copies that into every
 unreachable — provenance silently breaks. _Rule:_ commit everything, including the
 track spec, **then** deploy, **then** capture.
 
-**The lidar sees the car.** Returns at ~250 mm around 184° are the chassis, not an
-obstacle. This is what `LIDAR_LOWER_LIMIT = 90` / `LIDAR_UPPER_LIMIT = 270` exist
-to mask. _Tell:_ confirm the masked arc matches your actual mount before trusting
-scan geometry — `lidar_view.py --calibrate` measures it, as the arc of near
-returns that is present on every revolution rather than on some of them.
+**The lidar sees the car, and nothing is masking it.** Measured 2026-08-28 by
+`lidar_view.py --calibrate`: sensor bearings **20°–162°**, ranges **2–133 mm**,
+present on 97.5% of revolutions. In car bearings that is +107° through 180° to
+−111° — the body fills the rear **142°**, leaving a usable field of the forward
+~218°. The lidar is mounted at the front edge of the chassis, and part of that
+arc returns at a few millimetres, which is something effectively touching the
+housing: worth an eyeball that it is a bracket and not a cable that has drifted.
+
+An earlier version of this note said `LIDAR_LOWER_LIMIT = 90` /
+`LIDAR_UPPER_LIMIT = 270` mask this arc. They do not, and cannot:
+`USE_LIDAR = False`, and those limits belong to DonkeyCar's `RPLidar` part,
+which globs `/dev/ttyUSB*` and speaks the RPLidar protocol — it could not read
+an LD06 if it were enabled. They would not fit this mount either: 90–270 keeps
+half the chassis arc and discards clear world. **The masking has to happen in
+our own code**, in `cone_perception/lidar_cluster.py`, against the measured arc
+above. _Tell:_ re-run `--calibrate` after any remount; the arc is reported every
+time and lands in `calibration.json`.
 
 ## Software on the car
 

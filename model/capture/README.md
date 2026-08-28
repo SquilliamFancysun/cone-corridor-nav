@@ -309,7 +309,17 @@ nobody can interpret without going back to the car.
 `deploy.sh` excludes `calibration.json` from its `--delete`, so a redeploy does
 not wipe it. Copy the printed line here anyway, because the car is not backed up:
 
-    verified mount flags: (fill in after the first --calibrate run)
+    verified mount flags: --mirror --angle-offset 87.4
+
+Measured 2026-08-28 at commit 974fc85, on the LD06 as mounted today: residual
+1.75°, the opposite sign 88.25°. The offset is large because the sensor's zero
+points nearly across the car, not forward — the mount is rotated about 87°, and
+that is what the offset absorbs. Two cone poses at 0.965 m, no rival clusters,
+0% CRC drops.
+
+Independently corroborated by the car itself: the self-return arc's midpoint
+lands at car bearing 178.4°, 1.6° off dead-behind, which the cone poses had no
+influence over.
 
 ### `--angle-offset` and `--mount-yaw` are not the same knob
 

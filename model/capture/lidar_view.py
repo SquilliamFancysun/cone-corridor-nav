@@ -330,6 +330,10 @@ def run_calibration(args):
     except ValueError as exc:
         raise SystemExit(f"error: {exc}")
 
+    for flag in ("mount_x", "mount_y", "mount_z", "mount_yaw"):
+        if getattr(args, flag) is None:
+            setattr(args, flag, 0.0)
+
     target_mm = args.cal_range * 1000.0
     tol_mm = args.cal_tolerance * 1000.0
     handle = open_serial(args.port, BAUD)
@@ -502,11 +506,14 @@ def parse_args(argv=None):
                              "reasoning about the mount")
     parser.add_argument("--angle-offset", type=float, default=None,
                         help="degrees of yaw between the lidar's zero and forward")
-    parser.add_argument("--mount-x", type=float, default=0.0,
-                        help="lidar position in base_link, metres")
-    parser.add_argument("--mount-y", type=float, default=0.0)
-    parser.add_argument("--mount-z", type=float, default=0.0)
-    parser.add_argument("--mount-yaw", type=float, default=0.0, help="degrees")
+    # None, not 0.0, for the same reason as --mirror: a mount measured once
+    # with a tape belongs in calibration.json, not retyped every run.
+    parser.add_argument("--mount-x", type=float, default=None,
+                        help="lidar position in base_link, metres (default: from "
+                             "calibration.json, else 0)")
+    parser.add_argument("--mount-y", type=float, default=None)
+    parser.add_argument("--mount-z", type=float, default=None)
+    parser.add_argument("--mount-yaw", type=float, default=None, help="degrees")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="joystick device node")
     parser.add_argument("--record-button", type=int, default=2,
                         help="joystick button that toggles recording; 2 = X, the same "
@@ -563,6 +570,33 @@ def parse_args(argv=None):
     return args
 
 
+def resolve_mount(args, record):
+    """Fill the mount offsets from calibration.json, or zero them.
+
+    Zero is a real answer, not a missing one: it declares base_link to be the
+    lidar itself, which is fine for a single sensor and wrong the moment the
+    scan is put beside the camera's point cloud.
+    """
+    saved = (record or {}).get("mount") or {}
+    measured = False
+    for flag, key in (("mount_x", "x"), ("mount_y", "y"), ("mount_z", "z"),
+                      ("mount_yaw", "yaw_deg")):
+        if getattr(args, flag) is None:
+            value = saved.get(key)
+            setattr(args, flag, 0.0 if value is None else float(value))
+        else:
+            measured = True
+    if any((args.mount_x, args.mount_y, args.mount_z)):
+        measured = True
+    if not measured:
+        print("note: lidar mount offsets are all zero, so base_link IS the "
+              "lidar. Fine on its own;")
+        print("      measure --mount-x/-y/-z before comparing a scan with the "
+              "camera's cloud.")
+    return {"x": args.mount_x, "y": args.mount_y, "z": args.mount_z,
+            "yaw_deg": args.mount_yaw}
+
+
 def resolve_convention(args):
     """Settle mirror and angle offset, and say where they came from.
 
@@ -582,6 +616,7 @@ def resolve_convention(args):
         args.mirror = bool(args.mirror)
         args.angle_offset = args.angle_offset or 0.0
         source = "command line"
+        args._calibration_record = record
         if record and (record["mirror"] != args.mirror
                        or abs(record["angle_offset_deg"] - args.angle_offset) > 0.5):
             print(f"note: overriding {args.calibration} "
@@ -595,10 +630,12 @@ def resolve_convention(args):
         stamp = record.get("measured_utc", "unknown date")
         print(f"Bearing convention from {args.calibration} ({stamp}): "
               f"mirror={args.mirror}, offset={args.angle_offset:+.1f} deg")
+        args._calibration_record = record
         return f"calibration.json {stamp}"
 
     args.mirror = False
     args.angle_offset = 0.0
+    args._calibration_record = record
     # Not fatal — the raw bearings go into the recording untouched, so this is
     # fixable at a desk. But it is the error that looks like nothing.
     if args.no_calibration:
@@ -622,6 +659,7 @@ def main(argv=None):
         return run_calibration(args)
 
     convention_source = resolve_convention(args)
+    mount = resolve_mount(args, getattr(args, "_calibration_record", None))
     if args.angle_offset and args.mount_yaw:
         # log_scan rotates the bearings by --angle-offset and log_transform
         # rotates the whole frame by --mount-yaw, so setting both applies the
@@ -669,8 +707,7 @@ def main(argv=None):
         "mirrored": args.mirror,
         "angle_offset_deg": args.angle_offset,
         "convention_source": convention_source,
-        "mount": {"x": args.mount_x, "y": args.mount_y, "z": args.mount_z,
-                  "yaw_deg": args.mount_yaw},
+        "mount": mount,
         "bins": args.bins,
         "track": "data/layouts/track_v1.md",
         "git_commit": tool_commit(),
