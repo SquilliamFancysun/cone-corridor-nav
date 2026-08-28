@@ -78,8 +78,13 @@ def predict_session(model, session, session_dir, args, class_names):
             print(f"{session}: skipping {before - len(paths)} frames already "
                   f"uploaded (--include-uploaded to override)")
 
-    if args.limit:
-        paths = paths[: args.limit]
+    if args.limit and len(paths) > args.limit:
+        # Evenly spaced, matching roboflow_upload.py. Truncating instead would
+        # hand back one contiguous stretch of the drive -- the first 300 frames
+        # of a 1600-frame session are one corner in one light, and a batch
+        # corrected from that teaches v2 about that corner.
+        step = len(paths) / float(args.limit)
+        paths = [paths[int(i * step)] for i in range(args.limit)]
     if not paths:
         print(f"{session}: no frames left to pre-label, skipping")
         return None
@@ -188,8 +193,8 @@ def main(argv=None):
     parser.add_argument("--device", default=None, help="default: cuda, else mps, else cpu")
     parser.add_argument("--batch", type=int, default=16, help="frames per predict call")
     parser.add_argument("--limit", type=int, default=None,
-                        help="first N frames per session (not evenly spaced — "
-                             "roboflow_upload.py's --limit samples, this truncates)")
+                        help="at most N frames per session, evenly spaced across "
+                             "the drive — same sampling as roboflow_upload.py")
     parser.add_argument("--include-uploaded", action="store_true",
                         help="also propose on frames already uploaded; by default "
                              "those are skipped, since a human has labelled them")
