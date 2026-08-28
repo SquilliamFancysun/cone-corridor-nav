@@ -24,6 +24,7 @@ git -C "$HERE" rev-parse --short HEAD > "$HERE/VERSION" 2>/dev/null || echo "unk
 rsync -av --delete \
   --exclude='__pycache__' \
   --exclude='.pytest_cache' \
+  --exclude='.ruff_cache' \
   --exclude='test_*.py' \
   --exclude='fixtures' \
   --exclude='calibration.json' \
