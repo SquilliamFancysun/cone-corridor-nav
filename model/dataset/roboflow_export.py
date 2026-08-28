@@ -411,6 +411,82 @@ def sync_labels(location, scans, class_names, labels_dir, meta):
     print(f"\nsynced labels + manifest.json -> {labels_dir}")
 
 
+def normalize_label_file(label_path):
+    """Rewrite one label file so every row is a detection row: cls cx cy w h.
+
+    Roboflow's polygon tools emit segmentation rows -- `cls x1 y1 x2 y2 ...` --
+    and a file can hold both kinds at once when some cones were boxed and others
+    traced. Ultralytics accepts a file that is all one or all the other and
+    **skips the image entirely** when a file mixes them: "ignoring corrupt
+    image/label: labels mix segment and detection rows". It is a warning in a
+    wall of startup output, and what it costs is silent -- the first real export
+    here lost 60% of the validation split that way, and every metric printed was
+    computed on what survived.
+
+    Polygons collapse to their bounding extents, which is what ultralytics itself
+    would have done had the file been pure. Returns (rows, converted).
+    """
+    rows, converted = [], 0
+    with open(label_path) as fh:
+        lines = fh.readlines()
+
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        cls = parts[0]
+        if len(parts) == 5:
+            rows.append(f"{cls} {' '.join(parts[1:])}")
+            continue
+        if len(parts) > 5 and len(parts) % 2 == 1:
+            xs = [float(v) for v in parts[1::2]]
+            ys = [float(v) for v in parts[2::2]]
+            x0, x1 = min(xs), max(xs)
+            y0, y1 = min(ys), max(ys)
+            rows.append(f"{cls} {(x0 + x1) / 2:.6f} {(y0 + y1) / 2:.6f} "
+                        f"{x1 - x0:.6f} {y1 - y0:.6f}")
+            converted += 1
+            continue
+        raise ValueError(f"{label_path}: row with {len(parts)} fields is neither "
+                         f"a box nor a polygon")
+
+    if converted:
+        tmp = label_path + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write("\n".join(rows) + "\n")
+        os.replace(tmp, label_path)
+    return len(rows), converted
+
+
+def normalize_labels(location):
+    """Flatten every label in the export to detection rows. Returns a summary.
+
+    Done to the export rather than to labels/ because the export is what
+    ultralytics reads, and the export is disposable -- re-download it and this
+    runs again. Also drops the label caches: ultralytics keys them by a hash of
+    the label files, and a stale cache would preserve the very exclusions this
+    exists to undo.
+    """
+    files = converted_files = converted_rows = 0
+    for split in SPLITS:
+        _, labels_dir = split_dirs(location, split)
+        if not os.path.isdir(labels_dir):
+            continue
+        for name in sorted(os.listdir(labels_dir)):
+            if not name.endswith(".txt"):
+                continue
+            files += 1
+            _, converted = normalize_label_file(os.path.join(labels_dir, name))
+            if converted:
+                converted_files += 1
+                converted_rows += converted
+        cache = os.path.join(os.path.dirname(labels_dir), "labels.cache")
+        if os.path.exists(cache):
+            os.remove(cache)
+    return {"files": files, "converted_files": converted_files,
+            "converted_rows": converted_rows}
+
+
 def project_slug_from_location(location):
     """Recover the project slug from an export directory named <project>-v<N>.
 
@@ -486,6 +562,15 @@ def main(argv=None):
     print(f"matches {os.path.relpath(source, os.path.dirname(HERE))} — ok")
 
     class_names = tuple(truth)
+
+    norm = normalize_labels(location)
+    if norm["converted_rows"]:
+        print(f"\nnormalised {norm['converted_rows']} polygon rows to boxes across "
+              f"{norm['converted_files']}/{norm['files']} label files.")
+        print("  Ultralytics skips any image whose label file mixes polygon and box "
+              "rows, which is\n  a warning rather than an error and silently shrinks "
+              "the split it validates on.")
+
     scans = [s for s in (scan_split(location, split, class_names) for split in SPLITS) if s]
     if not scans:
         raise SystemExit(f"error: no train/valid/test directories under {location}")
@@ -519,6 +604,7 @@ def main(argv=None):
                 "project": project or project_slug_from_location(location),
                 "version": args.version,
                 "format": args.format,
+                "labels_normalized": norm,
             },
         }
         sync_labels(location, scans, class_names, os.path.expanduser(args.labels_dir), meta)

@@ -1,0 +1,113 @@
+{
+  "augmentation_note": "hue and saturation jitter are pinned to 0: color is the class signal",
+  "class_names": [
+    "blue",
+    "magenta",
+    "orange",
+    "red",
+    "yellow"
+  ],
+  "config": {
+    "batch": 16,
+    "close_mosaic": 10,
+    "data": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1/data.yaml",
+    "degrees": 0.0,
+    "device": "mps",
+    "epochs": 100,
+    "exist_ok": true,
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.2,
+    "imgsz": 640,
+    "model": "yolov8n.pt",
+    "mosaic": 1.0,
+    "name": "v1",
+    "patience": 20,
+    "plots": true,
+    "pretrained": true,
+    "project": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/training",
+    "scale": 0.5,
+    "seed": 0,
+    "translate": 0.1,
+    "val": true,
+    "workers": 8
+  },
+  "data_yaml_sha256": "92ddc655aede936c2c75c61c11da3ac0be30ccf53d28aaa901430b51b4926dfc",
+  "dataset_manifest": {
+    "class_names": [
+      "blue",
+      "magenta",
+      "orange",
+      "red",
+      "yellow"
+    ],
+    "class_order_source": "/Users/home/Projects/MAE 148/cone-corridor-nav/ros2/src/cone_msgs/msg/LabeledCone.msg",
+    "exported_utc": "2026-08-28T15:44:49+00:00",
+    "location": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1",
+    "roboflow": {
+      "format": "yolov8",
+      "project": "cone-detector-nfjog",
+      "version": "1",
+      "workspace": "r-william-thatcher-s-workspace"
+    },
+    "splits": [
+      {
+        "images": 320,
+        "instances": {
+          "blue": 357,
+          "magenta": 0,
+          "orange": 216,
+          "red": 309,
+          "yellow": 310
+        },
+        "labels": 320,
+        "sessions": {
+          "20260827_1053_lot-sun-A": 21,
+          "20260827_1503_eli1": 299
+        },
+        "split": "train"
+      },
+      {
+        "images": 20,
+        "instances": {
+          "blue": 59,
+          "magenta": 7,
+          "orange": 17,
+          "red": 28,
+          "yellow": 44
+        },
+        "labels": 20,
+        "sessions": {
+          "20260827_1429_ebu2_test_2": 20
+        },
+        "split": "valid"
+      },
+      {
+        "images": 20,
+        "instances": {
+          "blue": 95,
+          "magenta": 13,
+          "orange": 16,
+          "red": 37,
+          "yellow": 62
+        },
+        "labels": 20,
+        "sessions": {
+          "20260827_1413_ebu2_test": 20
+        },
+        "split": "test"
+      }
+    ]
+  },
+  "git_commit": "0a88898",
+  "git_dirty": true,
+  "versions": {
+    "cuda": null,
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "torch": "2.13.0",
+    "ultralytics": "8.4.131"
+  }
+}
