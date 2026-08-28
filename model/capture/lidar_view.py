@@ -6,7 +6,8 @@ three can run at once.
 
     python lidar_view.py --session-label lot-A
 
-Then connect Foxglove Studio on the laptop to ws://robocar:8765.
+Then connect Foxglove Studio on the laptop to ws://<car-ip>:8765 — the car's IP
+or its .local name, never the ssh alias, which only ssh can resolve.
 
 Not a ROS node, for the same reason capture_cones.py is not one: a recording
 that needs the class container up to replay is a recording Person B cannot use

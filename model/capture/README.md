@@ -36,6 +36,30 @@ in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants
 an SDL video driver we do not have over SSH). The lidar tool wants one package —
 see [Install](#install) below.
 
+## Addressing the car
+
+`robocar` is an **ssh alias**, defined in `~/.ssh/config` on the laptop. Only ssh
+reads that file — no browser, and no Foxglove, has ever heard of the name. A
+Foxglove connection to `ws://robocar:8765` fails with "Connection failed" and no
+further explanation, which reads like a dead server rather than a name that does
+not exist.
+
+Use the car's real name or its address:
+
+```bash
+ssh -G robocar | awk '/^hostname /{print $2}'   # what the alias resolves to
+ipconfig getifaddr en0                          # or ask the car: hostname -I
+```
+
+On this build that is `ucsdrobocar-148-02.local`. The `.local` name follows the
+car across networks; the IP does not, and campus DHCP moves it.
+
+The Foxglove **desktop app** is what these instructions assume. The web app at
+app.foxglove.dev is served over HTTPS, and a browser refuses a plain `ws://`
+connection from an HTTPS page as mixed content — the same "Connection failed",
+for an unrelated reason. `deploy.sh` prints the resolved URL at the end of every
+deploy, so it can be pasted rather than reconstructed.
+
 ## Camera: images for the dataset
 
 ### Why it is not a ROS node
@@ -192,8 +216,9 @@ python lidar_view.py --session-label lot-A
 ```
 
 Then in Foxglove Studio: **Open connection → Foxglove WebSocket →
-`ws://robocar:8765`**. Add a 3D panel for `/scan` and a Raw Messages panel for
-`/lidar_status`.
+`ws://<car-ip>:8765`** — the car's IP or its `.local` name, not the ssh alias
+(see [Addressing the car](#addressing-the-car)). Add a 3D panel for `/scan` and
+a Raw Messages panel for `/lidar_status`.
 
 | Topic | What |
 |---|---|
@@ -318,8 +343,9 @@ python depth_view.py
 ```
 
 Then in Foxglove Studio: **Open connection → Foxglove WebSocket →
-`ws://robocar:8766`** — 8766, not 8765, so the lidar view keeps its port and both
-stream at once. Add a **3D panel** for `/depth/points` and an **Image panel** for
+`ws://<car-ip>:8766`** — the car's IP or its `.local` name, not the ssh alias
+(see [Addressing the car](#addressing-the-car)); 8766, not 8765, so the lidar
+view keeps its port and both stream at once. Add a **3D panel** for `/depth/points` and an **Image panel** for
 `/depth/colorized`.
 
 | Topic | What |

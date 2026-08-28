@@ -2,8 +2,9 @@
 
     python depth_view.py
 
-Then connect Foxglove Studio to ws://robocar:8766 — port 8766, not 8765, so
-this and lidar_view.py can stream at the same time.
+Then connect Foxglove Studio to ws://<car-ip>:8766 — the car's IP or its
+.local name, never the ssh alias, which only ssh can resolve. Port 8766, not
+8765, so this and lidar_view.py can stream at the same time.
 
 Owns the camera, exactly as capture_cones.py does: only one process can hold
 the OAK-D, so DonkeyCar must be running with CAMERA_TYPE="MOCK" (see

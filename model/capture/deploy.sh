@@ -43,7 +43,17 @@ echo "For the depth demo instead of pane 2 — depth_view.py and capture_cones.p
 echo "both open the OAK-D, so they are mutually exclusive:"
 echo "      python depth_view.py"
 echo
-echo "Then connect Foxglove Studio to ws://$HOST:8765 (lidar), ws://$HOST:8766 (depth)"
+# $HOST is an ssh alias, and only ssh can resolve one. Printing ws://$HOST here
+# hands over a URL that Foxglove answers with a bare "Connection failed", so ask
+# ssh what the alias actually points at.
+CAR_HOST="$(ssh -G "$HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}')"
+CAR_HOST="${CAR_HOST:-$HOST}"
+echo "Then connect the Foxglove desktop app to:"
+echo "      ws://$CAR_HOST:8765   (lidar)"
+echo "      ws://$CAR_HOST:8766   (depth)"
+echo
+echo "The desktop app, not app.foxglove.dev — a browser blocks plain ws:// from"
+echo "an HTTPS page as mixed content, which fails the same opaque way."
 echo
 echo "The label describes the conditions and becomes the session directory"
 echo "name — replace lot-sun-A with your own. Every line above is literal and"
