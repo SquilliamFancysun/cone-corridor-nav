@@ -19,6 +19,21 @@
 #
 # Versions are pinned because train_config.json stamps them into every run, and
 # a curve nobody can reproduce is not a deliverable. Bump them deliberately.
+#
+# NEEDS PYTHON 3.11 OR NEWER (numpy 2.3.5 is the floor; roboflow and pillow want
+# 3.10). On macOS `python3` is Apple's 3.9 even inside a conda (base) shell, and
+# a venv built on it fails in a way that names the wrong culprit: its pip is too
+# old to read the newer releases' metadata, so it reports
+#
+#   ERROR: Could not find a version that satisfies the requirement roboflow==1.4.1
+#          (from versions: ... 1.2.16)
+#
+# which reads as a bad pin rather than a stale interpreter. Check before you
+# install, and build the venv against a Python you named explicitly:
+#
+#   python3 -V                          # if this says 3.9, do not use it
+#   /path/to/python3.11+ -m venv .venv  # e.g. ~/miniforge3/bin/python3
+#   source .venv/bin/activate && python -V
 
 ultralytics==8.4.131
 roboflow==1.4.1

@@ -33,6 +33,28 @@ for no benefit. Its DepthAI pipeline is the reference camera configuration that
 inference disagree on white balance, the detector sees different colors than it
 trained on.
 
+## Off-car environment
+
+Everything here except `capture/` runs on a laptop, against a venv in `model/.venv`
+(gitignored):
+
+```bash
+cd model
+/path/to/python3.11-or-newer -m venv .venv   # NOT bare `python3` on macOS — see below
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Python 3.11 is a hard floor** (numpy 2.3.5). macOS ships 3.9 as `python3` and
+it wins the PATH even inside a conda `(base)` shell; the resulting venv fails
+with `Could not find a version that satisfies the requirement roboflow==1.4.1`,
+which looks like a wrong pin and is actually a pip too old to read the release
+metadata. Verify with `python -V` after activating, before believing any
+install error. The car runs 3.11.2; this machine's miniforge is 3.13.
+
+`capture/` is the exception — it runs on the car against `~/env` and deliberately
+depends on nothing that is not already there.
+
 ## Classes
 
 | id | class   | role                                         |
