@@ -1,0 +1,66 @@
+{
+  "class_names": [
+    "blue",
+    "magenta",
+    "orange",
+    "red",
+    "yellow"
+  ],
+  "class_order_source": "/Users/home/Projects/MAE 148/cone-corridor-nav/ros2/src/cone_msgs/msg/LabeledCone.msg",
+  "exported_utc": "2026-08-28T15:15:47+00:00",
+  "location": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1",
+  "roboflow": {
+    "format": "yolov8",
+    "project": null,
+    "version": "1",
+    "workspace": null
+  },
+  "splits": [
+    {
+      "images": 320,
+      "instances": {
+        "blue": 357,
+        "magenta": 0,
+        "orange": 216,
+        "red": 309,
+        "yellow": 310
+      },
+      "labels": 320,
+      "sessions": {
+        "20260827_1053_lot-sun-A": 21,
+        "20260827_1503_eli1": 299
+      },
+      "split": "train"
+    },
+    {
+      "images": 20,
+      "instances": {
+        "blue": 59,
+        "magenta": 7,
+        "orange": 17,
+        "red": 28,
+        "yellow": 44
+      },
+      "labels": 20,
+      "sessions": {
+        "20260827_1429_ebu2_test_2": 20
+      },
+      "split": "valid"
+    },
+    {
+      "images": 20,
+      "instances": {
+        "blue": 95,
+        "magenta": 13,
+        "orange": 16,
+        "red": 37,
+        "yellow": 62
+      },
+      "labels": 20,
+      "sessions": {
+        "20260827_1413_ebu2_test": 20
+      },
+      "split": "test"
+    }
+  ]
+}
