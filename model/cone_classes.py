@@ -25,7 +25,7 @@ REPO_MSG_PATH = os.path.normpath(os.path.join(
 
 # Mirrors capture/session.py. Used only when the .msg is out of reach — a Colab
 # runtime with just model/ uploaded, say — and the fallback is always announced.
-FALLBACK_CLASS_NAMES = ("blue", "yellow", "red", "orange", "magenta")
+FALLBACK_CLASS_NAMES = ("blue", "magenta", "orange", "red", "yellow")
 
 SPLITS = ("train", "valid", "test")
 
@@ -89,8 +89,11 @@ def check_order(names, msg_path=None, quiet=False):
     ]
     if sorted(got) == sorted(truth):
         lines.append("  Same names, different order — this is exactly the silent")
-        lines.append("  permutation. Fix the class order in the Roboflow project")
-        lines.append("  (Classes tab) and re-export; do not remap it downstream.")
+        lines.append("  permutation. The ids are alphabetical precisely because that")
+        lines.append("  is what Roboflow assigns, so an export that disagrees means a")
+        lines.append("  class was renamed or added in the project. Fix it there and cut")
+        lines.append("  a new version. Never remap downstream: the label files hold")
+        lines.append("  integers, so renaming the classes relabels every box.")
     else:
         missing = [n for n in truth if n not in got]
         extra = [n for n in got if n not in truth]

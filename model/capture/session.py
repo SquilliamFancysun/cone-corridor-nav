@@ -19,8 +19,9 @@ TOOL_VERSION = "1"
 
 # Colors are the classes. Kept here so the capture side and the dataset side
 # agree without importing ROS. Order matters: it is the class-id order in
-# cone_msgs/msg/LabeledCone.msg and must match the Roboflow project.
-CLASS_NAMES = ("blue", "yellow", "red", "orange", "magenta")
+# cone_msgs/msg/LabeledCone.msg and must match the Roboflow project. Alphabetical
+# because that is what Roboflow assigns; see the note in the .msg.
+CLASS_NAMES = ("blue", "magenta", "orange", "red", "yellow")
 
 
 def session_dir_name(label, when=None):

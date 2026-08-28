@@ -12,10 +12,15 @@ index Roboflow assigns has to match the constants in
 | id | name |
 |----|-----------|
 | 0 | `blue` |
-| 1 | `yellow` |
-| 2 | `red` |
-| 3 | `orange` |
-| 4 | `magenta` |
+| 1 | `magenta` |
+| 2 | `orange` |
+| 3 | `red` |
+| 4 | `yellow` |
+
+This is alphabetical order, which is what Roboflow assigns on its own — the
+`.msg` was renumbered to match it rather than fight it. Create the classes in
+any order you like; what matters is that the exported `data.yaml` comes back in
+this one.
 
 **Verify the order in the exported `data.yaml`.** Do not assume it — a silent
 permutation here turns into a detector that calls every gate cone a boundary,

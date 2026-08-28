@@ -60,10 +60,13 @@ depends on nothing that is not already there.
 | id | class   | role                                         |
 |----|---------|----------------------------------------------|
 | 0  | blue    | left corridor boundary                       |
-| 1  | yellow  | right corridor boundary                      |
-| 2  | red     | junction gate — always placed in pairs       |
-| 3  | orange  | dead end — the wall across a stub            |
-| 4  | magenta | goal marker                                  |
+| 1  | magenta | goal marker                                  |
+| 2  | orange  | dead end — the wall across a stub            |
+| 3  | red     | junction gate — always placed in pairs       |
+| 4  | yellow  | right corridor boundary                      |
+
+The ids are alphabetical by name — the order Roboflow assigns. They carry no
+meaning beyond agreeing with the dataset; see the note in `LabeledCone.msg`.
 
 The class *is* the color; left/right are relative to the direction of travel, so
 the same corridor driven in reverse still has blue on its own left. Class ids

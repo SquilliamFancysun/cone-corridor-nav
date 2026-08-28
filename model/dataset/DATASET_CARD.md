@@ -9,7 +9,7 @@ than counting by hand; the numbers below should be measurements.
 
 ## Composition
 - Total images:
-- Per class instance counts: blue / yellow / red / orange / magenta:
+- Per class instance counts: blue / magenta / orange / red / yellow:
   - Watch the imbalance: the track carries ~36 boundary cones but only 4 red,
     2 orange and 1 magenta. Keep shooting those three (cone-zoo sessions, slow
     junction passes) until they are within roughly 3:1 of the boundary classes.
