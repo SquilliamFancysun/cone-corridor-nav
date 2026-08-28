@@ -44,10 +44,15 @@
       "yellow"
     ],
     "class_order_source": "/Users/home/Projects/MAE 148/cone-corridor-nav/ros2/src/cone_msgs/msg/LabeledCone.msg",
-    "exported_utc": "2026-08-28T15:44:49+00:00",
+    "exported_utc": "2026-08-28T16:39:26+00:00",
     "location": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1",
     "roboflow": {
       "format": "yolov8",
+      "labels_normalized": {
+        "converted_files": 283,
+        "converted_rows": 1415,
+        "files": 360
+      },
       "project": "cone-detector-nfjog",
       "version": "1",
       "workspace": "r-william-thatcher-s-workspace"
@@ -101,8 +106,8 @@
       }
     ]
   },
-  "git_commit": "0a88898",
-  "git_dirty": true,
+  "git_commit": "ffe5922",
+  "git_dirty": false,
   "versions": {
     "cuda": null,
     "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
