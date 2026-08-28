@@ -16,8 +16,11 @@ Images stay out of git; labels, the class list and the manifest are synced into
 `model/dataset/labels/`, which is committed.
 
     export ROBOFLOW_API_KEY=...
-    python roboflow_export.py \
-        --workspace WS --project PROJ --version 3
+    python roboflow_export.py --version 3
+
+The workspace and project come from model/roboflow.json; --workspace / --project
+and $ROBOFLOW_WORKSPACE / $ROBOFLOW_PROJECT still override it. See
+roboflow_config.py.
 
 Already have the export on disk?
 
@@ -37,6 +40,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cone_classes import (SPLITS, check_order, load_data_yaml,  # noqa: E402
                           resolve_class_names, session_of)
+
+import roboflow_config  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_EXPORT_DIR = os.path.join(HERE, "export")
@@ -59,12 +64,11 @@ def download(args):
             "       (or pass --location <dir> --no-download for an export you already have)"
         )
     key = args.api_key or os.environ.get("ROBOFLOW_API_KEY")
-    workspace = args.workspace or os.environ.get("ROBOFLOW_WORKSPACE")
-    project_id = args.project or os.environ.get("ROBOFLOW_PROJECT")
     if not key:
         raise SystemExit("error: no API key. export ROBOFLOW_API_KEY=...")
-    if not (workspace and project_id and args.version):
-        raise SystemExit("error: --workspace, --project and --version are required")
+    workspace, project_id = roboflow_config.slugs(args)
+    if not args.version:
+        raise SystemExit("error: --version is required (the Roboflow version number)")
 
     location = args.location or os.path.join(
         DEFAULT_EXPORT_DIR, f"{project_id}-v{args.version}")
@@ -122,9 +126,12 @@ def read_boxes(label_path):
     Polygons are reduced to their bounding extents, which is exactly what
     ultralytics does when it trains a detector on segment labels -- so the numbers
     reported here describe the boxes the model will actually be trained on.
+
+    The set of row kinds comes back too, because a file holding both kinds is one
+    ultralytics will not load at all. See report().
     """
-    boxes, bad = [], 0
-    with open(label_path) as fh:
+    boxes, bad, kinds = [], 0, set()
+    with open(label_path, encoding="utf-8") as fh:
         for line in fh:
             parts = line.split()
             if not parts:
@@ -133,16 +140,18 @@ def read_boxes(label_path):
                 cls = int(float(parts[0]))
                 if len(parts) == 5:
                     boxes.append((cls, float(parts[3]), float(parts[4])))
+                    kinds.add("box")
                 elif len(parts) > 5 and len(parts) % 2 == 1:
                     # cls + an even number of coordinates: a polygon.
                     xs = [float(v) for v in parts[1::2]]
                     ys = [float(v) for v in parts[2::2]]
                     boxes.append((cls, max(xs) - min(xs), max(ys) - min(ys)))
+                    kinds.add("segment")
                 else:
                     bad += 1
             except ValueError:
                 bad += 1
-    return boxes, bad
+    return boxes, bad, kinds
 
 
 def scan_split(location, split, class_names):
@@ -159,13 +168,16 @@ def scan_split(location, split, class_names):
     tiny = 0
     empty_labels = 0
     malformed = 0
+    mixed_rows = []
     sessions = {}
     label_stems = set()
 
     for path in labels:
         label_stems.add(os.path.splitext(os.path.basename(path))[0])
-        boxes, bad = read_boxes(path)
+        boxes, bad, kinds = read_boxes(path)
         malformed += bad
+        if len(kinds) > 1:
+            mixed_rows.append(os.path.basename(path))
         if not boxes:
             empty_labels += 1
         for cls, w, h in boxes:
@@ -193,6 +205,7 @@ def scan_split(location, split, class_names):
         "orphan_labels": len(label_stems - image_stems),
         "empty_labels": empty_labels,
         "malformed": malformed,
+        "mixed_rows": mixed_rows,
         "counts": counts,
         "unknown_ids": unknown_ids,
         "sessions": sessions,
@@ -238,6 +251,28 @@ def report(scans, class_names):
     if "(unprefixed)" in where:
         print("\nnote: some images have no <session>__ prefix — uploaded outside "
               "roboflow_upload.py.\n      Leakage cannot be checked for those.")
+
+    # Ultralytics refuses to load a label file that mixes a `cls x y w h` row
+    # with a polygon row, and it refuses quietly: the image is dropped with one
+    # "corrupt" line in a scroll of loading output, and training continues on
+    # whatever is left. read_boxes reads both kinds happily, so without this the
+    # counts printed below would describe images the model never sees -- and
+    # DATASET_CARD.md would record them. Roboflow produces the mix when some
+    # annotations on an image were drawn with Smart Polygon and the rest as
+    # plain boxes.
+    mixed_total = sum(len(scan["mixed_rows"]) for scan in scans)
+    if mixed_total:
+        detail = "\n".join(
+            f"    {scan['split']}: {len(scan['mixed_rows'])} of {scan['labels']} "
+            f"(e.g. {scan['mixed_rows'][0]})"
+            for scan in scans if scan["mixed_rows"])
+        problems.append(
+            f"{mixed_total} label file(s) mix box and polygon rows. ultralytics "
+            "drops each one\n    silently as 'corrupt', so they would be counted "
+            "here and never trained on:\n" + detail +
+            "\n    Fix in Roboflow: re-draw so every annotation on those images is "
+            "the same\n    kind (this is a detection project, so boxes), then cut "
+            "a new version.")
 
     print("\n" + "=" * 68)
     print("Instances per class\n")
@@ -329,13 +364,20 @@ def sync_labels(location, scans, class_names, labels_dir, meta):
         for path in list_files(src, (".txt",)):
             shutil.copy2(path, os.path.join(dest, os.path.basename(path)))
 
-    rel_location = os.path.relpath(location, labels_dir)
+    # Forward slashes, always: this file is committed and then read on Windows,
+    # macOS and in Colab. os.path.relpath hands back backslashes on Windows, which
+    # the other two read as part of the name rather than as a separator.
+    rel_location = os.path.relpath(location, labels_dir).replace(os.sep, "/")
     yaml_path = os.path.join(labels_dir, "data.yaml")
-    with open(yaml_path, "w") as fh:
+    # encoding and newline are pinned for the same reason the separator is: this
+    # is the committed record, and the Windows defaults (cp1252, CRLF) write a
+    # different file than the Mac does from identical input. The em dash below
+    # is what makes that visible -- it lands as a mojibake byte.
+    with open(yaml_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# Written by roboflow_export.py — the committed record of the\n"
                  "# dataset this model was trained on. Images are gitignored, so the\n"
                  "# paths point at a local export; re-download it with\n"
-                 "#   python roboflow_export.py --workspace ... --project ... --version N\n")
+                 "#   python roboflow_export.py --version N\n")
         fh.write(f"path: {rel_location}\n")
         for scan in scans:
             fh.write(f"{yaml_key(scan['split'])}: {scan['split']}/images\n")
@@ -362,7 +404,8 @@ def sync_labels(location, scans, class_names, labels_dir, meta):
             for scan in scans
         ],
     }
-    with open(os.path.join(labels_dir, "manifest.json"), "w") as fh:
+    with open(os.path.join(labels_dir, "manifest.json"), "w",
+              encoding="utf-8", newline="\n") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True)
         fh.write("\n")
     print(f"\nsynced labels + manifest.json -> {labels_dir}")
@@ -387,13 +430,12 @@ def rewrite_data_yaml(location, class_names, scans):
     smoke test read the same file and mean the same thing.
     """
     path = os.path.join(location, "data.yaml")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# Rewritten by roboflow_export.py: absolute paths, class order\n"
                  "# verified against cone_msgs/msg/LabeledCone.msg.\n")
         fh.write(f"path: {os.path.abspath(location)}\n")
         for scan in scans:
-            fh.write(f"{yaml_key(scan['split'])}: "
-                     f"{os.path.join(scan['split'], 'images')}\n")
+            fh.write(f"{yaml_key(scan['split'])}: {scan['split']}/images\n")
         fh.write(f"nc: {len(class_names)}\n")
         fh.write("names:\n")
         for i, name in enumerate(class_names):
@@ -461,18 +503,20 @@ def main(argv=None):
         return 1
 
     if not args.no_sync_labels:
-        # Resolved, not args: the slugs usually arrive as ROBOFLOW_WORKSPACE /
-        # ROBOFLOW_PROJECT, and recording the bare args wrote null for both.
-        # data.yaml tells the next person to "re-download it with --workspace
-        # ... --project ...", so a manifest that does not say which project is
-        # a dead end -- the slugs then have to be dug out of Roboflow's own
-        # README, or the account.
+        # Resolved, not args: the slugs arrive as often from roboflow.json or
+        # $ROBOFLOW_* as from a flag, and recording the bare args wrote null for
+        # both. data.yaml tells the next person to "re-download it with
+        # --workspace ... --project ...", so a manifest that does not say which
+        # project is a dead end -- the slugs then have to be dug out of
+        # Roboflow's own README, or the account.
+        config = roboflow_config.load()
+        workspace, _ = roboflow_config.resolve("workspace", args, config)
+        project, _ = roboflow_config.resolve("project", args, config)
         meta = {
             "class_order_source": os.path.abspath(source),
             "roboflow": {
-                "workspace": args.workspace or os.environ.get("ROBOFLOW_WORKSPACE"),
-                "project": (args.project or os.environ.get("ROBOFLOW_PROJECT")
-                            or project_slug_from_location(location)),
+                "workspace": workspace,
+                "project": project or project_slug_from_location(location),
                 "version": args.version,
                 "format": args.format,
             },

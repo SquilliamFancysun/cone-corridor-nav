@@ -114,7 +114,7 @@ def dataset_manifest(data_path):
     """
     path = os.path.normpath(os.path.join(HERE, "..", "dataset", "labels", "manifest.json"))
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             manifest = json.load(fh)
     except (OSError, ValueError):
         return None
@@ -145,7 +145,7 @@ def stamp_provenance(run_dir, config, args, class_names):
               "not be\n      traceable to a Roboflow version. Export with "
               "roboflow_export.py to get one.")
     path = os.path.join(run_dir, "train_config.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(stamp, fh, indent=2, sort_keys=True)
         fh.write("\n")
     if stamp["git_dirty"]:

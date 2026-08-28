@@ -38,13 +38,25 @@ on both sides of the boundary, which inflates mAP and hides exactly the
 generalization failure the test set exists to catch. Hold back a whole lighting
 condition rather than skimming frames off each one.
 
+Say which Roboflow project this repo is, once, in
+[`model/roboflow.json`](../roboflow.json):
+
+```json
+{"workspace": "your-workspace-slug", "project": "cone-detector-nfjog"}
+```
+
+Both slugs are the url segments in `app.roboflow.com/<workspace>/<project>`. That
+file is committed — it is the same answer for everyone working on the repo — so
+no script below asks for the slugs again. `--workspace` / `--project` still
+override it, and so do `$ROBOFLOW_WORKSPACE` / `$ROBOFLOW_PROJECT`. The API key
+is the exception and never goes in that file: it stays in the environment.
+
 Decide the split in [`splits.json`](splits.json), then:
 
 ```bash
 export ROBOFLOW_API_KEY=...
 cd model/dataset
-python roboflow_upload.py \
-    --workspace WS --project PROJ --dry-run     # then without --dry-run
+python roboflow_upload.py --dry-run          # then without --dry-run
 ```
 
 It refuses to upload a session nobody has assigned a split to, and renames
@@ -81,7 +93,7 @@ Roboflow's own Label Assist wants the model hosted there; we train locally, so:
 ```bash
 python roboflow_prelabel.py \
     --weights ../training/v1/weights/best.pt \
-    --session 20260827_1503_eli1 --workspace WS --project PROJ
+    --session 20260827_1503_eli1
 ```
 
 The proposals go into a `<session>-auto` batch tagged `auto-labeled`, so the
@@ -104,8 +116,7 @@ whether v1 finds magenta at all before you spend upload quota finding out.
 Export YOLOv8 format, then pull it down with the script rather than by hand:
 
 ```bash
-python roboflow_export.py \
-    --workspace WS --project PROJ --version 3
+python roboflow_export.py --version 3
 ```
 
 It downloads into `model/dataset/export/` (gitignored), then checks the class

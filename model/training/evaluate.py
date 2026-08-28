@@ -25,6 +25,7 @@ Requires the off-car venv: see ../requirements.txt.
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -33,6 +34,39 @@ from cone_classes import check_order, load_data_yaml, session_of  # noqa: E402
 from runtime import pick_device  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def data_from_run(weights):
+    """The data.yaml this run trained on, recovered from the run directory.
+
+    train.py stamps train_config.json beside the weights so a run can be traced
+    back to its dataset. Reading it back is what makes `--weights X` on its own
+    enough to validate: the answer was already on disk two levels up, and asking
+    for it again is how the wrong data.yaml gets paired with the right weights.
+
+    The recorded path is absolute, so a run directory copied from another machine
+    points somewhere that does not exist here. Say so and return None -- guessing
+    is worse than the explicit --data it falls back to.
+    """
+    run_dir = os.path.dirname(os.path.dirname(os.path.abspath(weights)))
+    stamp = os.path.join(run_dir, "train_config.json")
+    if not os.path.exists(stamp):
+        return None
+    try:
+        with open(stamp, encoding="utf-8") as fh:
+            recorded = json.load(fh).get("config", {}).get("data")
+    except (OSError, ValueError) as exc:
+        print(f"note: cannot read {tidy_path(stamp)}: {exc}")
+        return None
+    if not recorded:
+        return None
+    if not os.path.exists(recorded):
+        print(f"note: {tidy_path(stamp)} names a data.yaml that is not on "
+              "this machine:")
+        print(f"        {recorded}")
+        print("      Re-download that export, or pass --data.")
+        return None
+    return recorded
 
 
 def tidy_path(path):
@@ -280,7 +314,7 @@ def qualitative(model, images_dir, class_names, args):
 
 
 def write_report(path, sections):
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         for heading, body in sections:
             if heading:
                 fh.write(f"\n## {heading}\n\n")
@@ -297,7 +331,8 @@ def main(argv=None):
     )
     parser.add_argument("--weights", required=True)
     parser.add_argument("--data", default=None,
-                        help="data.yaml; omit only with --images (no metrics then)")
+                        help="data.yaml (default: the one train_config.json records "
+                             "for these weights)")
     parser.add_argument("--split", default="test", choices=("train", "val", "test"),
                         help="default: test — the split no training run has seen")
     parser.add_argument("--imgsz", type=int, default=640)
@@ -316,6 +351,11 @@ def main(argv=None):
                         help="default: the run directory two levels above the weights")
     parser.add_argument("--report", default=None, help="default: <out-dir>/report_<split>.md")
     args = parser.parse_args(argv)
+
+    if not args.data:
+        args.data = data_from_run(args.weights)
+        if args.data:
+            print(f"data: {tidy_path(args.data)}  (from train_config.json)")
 
     args.device = pick_device(args.device)
     model = load_model(args.weights)
@@ -364,7 +404,10 @@ def main(argv=None):
             print("\n".join(f"  * {n}" for n in confusion))
             sections.append(("Confusion", "\n".join(f"- {n}" for n in confusion)))
     elif not args.images:
-        raise SystemExit("error: pass --data (metrics), --images (qualitative), or both")
+        raise SystemExit(
+            "error: pass --data (metrics), --images (qualitative), or both."
+            "\n       --data could not be recovered from train_config.json next "
+            "to the weights.")
 
     if args.images:
         lines = qualitative(model, args.images, class_names, args)

@@ -42,7 +42,7 @@ def class_names_from_msg(msg_path=None):
     """
     path = msg_path or REPO_MSG_PATH
     found = {}
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             match = _CONST_RE.match(line)
             if match:
@@ -113,7 +113,7 @@ def load_data_yaml(path):
             "error: needs pyyaml to read data.yaml.\n"
             "       pip install -r requirements.txt  (from model/)"
         )
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
     if not isinstance(doc, dict) or "names" not in doc:
         raise SystemExit(f"error: {path} has no 'names' — is it a YOLO data.yaml?")

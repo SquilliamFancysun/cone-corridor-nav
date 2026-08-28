@@ -13,8 +13,9 @@ corrected — LABELING.md asks for that number, and the corrections are the
 interesting part.
 
     python roboflow_prelabel.py \
-        --weights ../training/v1/weights/best.pt --session 20260827_1503_eli1 \
-        --workspace WS --project PROJ
+        --weights ../training/v1/weights/best.pt --session 20260827_1503_eli1
+
+The workspace and project come from model/roboflow.json; see roboflow_config.py.
 
 `--no-upload` writes the label files and stops, which is also the fastest way to
 see whether v1 finds magenta at all, and whether it is telling red and orange
@@ -57,7 +58,7 @@ def write_label(result, path, conf):
         xc, yc, w, h = (float(v) for v in boxes.xywhn[i])
         lines.append(f"{cls} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}")
         kept_conf.append((cls, score))
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + ("\n" if lines else ""))
     return kept_conf
 

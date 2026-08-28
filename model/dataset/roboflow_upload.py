@@ -14,8 +14,12 @@ the web uploader will not:
    the wrong place.
 
     export ROBOFLOW_API_KEY=...
-    python roboflow_upload.py --workspace WS --project PROJ --dry-run
-    python roboflow_upload.py --workspace WS --project PROJ
+    python roboflow_upload.py --dry-run
+    python roboflow_upload.py
+
+Workspace and project come from model/roboflow.json (see roboflow_config.py);
+--workspace / --project and $ROBOFLOW_* still override it. The API key never
+goes in that file -- it is committed.
 
 Only the *kept* frames go up — `_rejected/` is skipped, since those were culled
 precisely so nobody spends labeling time on them.
@@ -32,6 +36,8 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cone_classes import SPLITS, resolve_class_names, staged_name  # noqa: E402
 
+import roboflow_config  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_IMAGES_DIR = os.path.join(HERE, "images")
 DEFAULT_SPLITS_FILE = os.path.join(HERE, "splits.json")
@@ -39,7 +45,7 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 
 
 def load_splits(path):
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     sessions = doc.get("sessions", {})
     if not sessions:
@@ -98,11 +104,7 @@ def connect(args):
             "error: no API key. export ROBOFLOW_API_KEY=... (Roboflow > Settings >\n"
             "       API Keys). Do not put it in a file in this repo."
         )
-    workspace = args.workspace or os.environ.get("ROBOFLOW_WORKSPACE")
-    project_id = args.project or os.environ.get("ROBOFLOW_PROJECT")
-    if not workspace or not project_id:
-        raise SystemExit("error: --workspace and --project are required "
-                         "(or ROBOFLOW_WORKSPACE / ROBOFLOW_PROJECT)")
+    workspace, project_id = roboflow_config.slugs(args)
     project = Roboflow(api_key=key).workspace(workspace).project(project_id)
     check_project_classes(project)
     return project
