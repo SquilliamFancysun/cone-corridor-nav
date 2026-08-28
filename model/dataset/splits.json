@@ -12,9 +12,9 @@
     "Keep this in sync with the session table in DATASET_CARD.md."
   ],
   "sessions": {
-    "20260827_1053_lot-sun-A": null,
-    "20260827_1413_ebu2_test": null,
-    "20260827_1429_ebu2_test_2": null,
-    "20260827_1503_eli1": null
+    "20260827_1053_lot-sun-A": "train",
+    "20260827_1413_ebu2_test": "test",
+    "20260827_1429_ebu2_test_2": "valid",
+    "20260827_1503_eli1": "train"
   }
 }
