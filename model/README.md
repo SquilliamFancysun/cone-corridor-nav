@@ -85,15 +85,58 @@ confusion between them specifically — `evaluate.py` calls that pair out by nam
 
 ## Pipeline
 
-0. Build and survey the track (`data/layouts/track_v1.md`) — capture happens on
-   the course we actually intend to run
-1. Drive the track and record with `capture/` (Person C, day 2)
-2. Cull with `dataset/prepare_dataset.py`, decide the split in `dataset/splits.json`,
-   upload with `dataset/roboflow_upload.py`
-3. Hand-label 100–150 images; train v1 with `training/train.py`; propose boxes for
-   the rest with `dataset/roboflow_prelabel.py`; correct them in Roboflow (day 3)
-4. Re-export with `dataset/roboflow_export.py` — which is where the class order
-   and the split are verified — and retrain v2 on the full corrected set (day 4)
-5. Check with `training/evaluate.py --split test`, per class, on a held-out session
-6. Export: `.pt` → ONNX → OAK-D blob (6 SHAVEs) for on-device inference
-7. Trained weights/blobs attach to a GitHub Release, not to git
+Car to weights, and what each stage guarantees. Steps 1-2 happen once per capture
+day; 4-8 are a loop that tightens as the model gets good enough to label for you.
+
+```mermaid
+flowchart TD
+    T["0 · Track built and surveyed<br/>data/layouts/track_v1.md"]
+    C["1 · capture_cones.py<br/><i>on the car</i>"]
+    P["2 · prepare_dataset.py --pull<br/>rsync, cull, contact sheets"]
+    S["3 · splits.json<br/><i>a human decides</i>"]
+    U["4 · roboflow_upload.py<br/>one batch per session"]
+    A["5 · Annotate<br/><i>Roboflow web</i>"]
+    V["6 · Generate a version<br/><i>Roboflow web</i>"]
+    E["7 · roboflow_export.py<br/>gates, then syncs labels to git"]
+    R["8 · train.py"]
+    L["9 · roboflow_prelabel.py<br/>v1 proposes, a human corrects"]
+    B["10 · evaluate.py, then ONNX -> .blob"]
+
+    T --> C --> P --> S --> U --> A --> V --> E --> R --> B
+    R -. "the loop: label the rest cheaply" .-> L
+    L -. "new batches" .-> V
+```
+
+| # | What runs | Produces | What it is there for |
+|---|---|---|---|
+| 0 | — | `track_v1.csv` survey | Capture on the course we actually intend to run |
+| 1 | `capture/capture_cones.py` | `~/cone_capture/<session>/frames/` + `session.json` | One **session** = one set of conditions. Locked AE/AWB/focus, recorded |
+| 2 | `dataset/prepare_dataset.py --pull robocar` | `dataset/images/<session>/`, `_rejected/`, contact sheets | Drops blurry (VoL < 40) and near-duplicate (dHash <= 6) frames. **Moves**, never deletes |
+| 3 | edit `dataset/splits.json` | session -> train/valid/test | Split by whole session. A random split puts near-identical frames on both sides and inflates mAP |
+| 4 | `dataset/roboflow_upload.py` | Roboflow batches | Split assigned at upload; frames renamed `<session>__<frame>.jpg`. `--limit` samples evenly for a hand-label batch |
+| 5 | Roboflow web | annotations | Box protocol in [`dataset/LABELING.md`](dataset/LABELING.md) |
+| 6 | Roboflow web | a numbered **version** | The immutable snapshot a training run cites. Augmentation multiplies train images only |
+| 7 | `dataset/roboflow_export.py --version N` | `dataset/export/` (gitignored), `dataset/labels/` (**in git**) | Refuses unless the class order matches the `.msg` and no session straddles two splits |
+| 8 | `training/train.py --data .../data.yaml` | `training/<name>/` weights + curves | Curves are D2. Colour-unsafe augmentation is not reachable from the CLI |
+| 9 | `dataset/roboflow_prelabel.py --weights .../best.pt` | `<session>-auto` batches, tagged | v1 proposes boxes on the frames nobody labeled; correcting is far faster than drawing |
+| 10 | `training/evaluate.py --split test`, then `export/` | per-class numbers, OAK-D `.blob` | Report red-vs-orange separately; weights attach to a Release, not to git |
+
+### Two rules that explain the rest of it
+
+**The session is the unit of everything** — the split, the Roboflow batch, the
+filename prefix, the provenance row in `DATASET_CARD.md`. That is what turns "did
+anything leak across the split?" into a question `roboflow_export.py` can answer
+instead of something you hope about.
+
+**Images are never in git; labels always are.** `dataset/export/` is disposable —
+re-download it with the script. `dataset/labels/` and its `manifest.json` are the
+committed record of exactly what a model was trained on. Roboflow is the canonical
+image store, which is also the answer to sharing the dataset across machines.
+
+### Numbers that change on their own, and why
+
+Frame counts drop at step 2 (the cull) and **rise** at step 6: Roboflow's
+augmentation multiplies the training split only, so 107 uploaded train images can
+export as ~320 while valid and test stay exactly as uploaded. Neither is a bug.
+The counts to quote in `DATASET_CARD.md` are the ones `roboflow_export.py` prints,
+because those describe the dataset the model actually saw.
