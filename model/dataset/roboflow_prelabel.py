@@ -36,6 +36,7 @@ from cone_classes import resolve_class_names, staged_name  # noqa: E402
 from runtime import pick_device  # noqa: E402
 from roboflow_upload import (DEFAULT_IMAGES_DIR, DEFAULT_SPLITS_FILE, connect,  # noqa: E402
                              kept_frames, load_splits)
+from cone_classes import read_uploaded  # noqa: E402
 
 PRELABEL_DIRNAME = "_prelabel"
 
@@ -65,10 +66,22 @@ def write_label(result, path, conf):
 
 def predict_session(model, session, session_dir, args, class_names):
     paths = kept_frames(session_dir)
+
+    # Frames a human already labelled are not candidates for machine proposals.
+    # Without this the hand-label batch comes back a second time as v1's guesses,
+    # and the careful work is buried under the cheap work.
+    if not args.include_uploaded:
+        already = read_uploaded(session_dir)
+        if already:
+            before = len(paths)
+            paths = [p for p in paths if os.path.basename(p) not in already]
+            print(f"{session}: skipping {before - len(paths)} frames already "
+                  f"uploaded (--include-uploaded to override)")
+
     if args.limit:
         paths = paths[: args.limit]
     if not paths:
-        print(f"{session}: no frames in frames/, skipping")
+        print(f"{session}: no frames left to pre-label, skipping")
         return None
 
     out_dir = os.path.join(session_dir, PRELABEL_DIRNAME)
@@ -174,7 +187,12 @@ def main(argv=None):
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", default=None, help="default: cuda, else mps, else cpu")
     parser.add_argument("--batch", type=int, default=16, help="frames per predict call")
-    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--limit", type=int, default=None,
+                        help="first N frames per session (not evenly spaced — "
+                             "roboflow_upload.py's --limit samples, this truncates)")
+    parser.add_argument("--include-uploaded", action="store_true",
+                        help="also propose on frames already uploaded; by default "
+                             "those are skipped, since a human has labelled them")
     parser.add_argument("--batch-suffix", default="-auto",
                         help="appended to the session name for the Roboflow batch")
     parser.add_argument("--tag", action="append", default=["auto-labeled"])

@@ -34,7 +34,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from cone_classes import SPLITS, resolve_class_names, staged_name  # noqa: E402
+from cone_classes import (SPLITS, record_uploaded,  # noqa: E402
+                          resolve_class_names, staged_name)
 
 import roboflow_config  # noqa: E402
 
@@ -141,7 +142,7 @@ def upload_session(project, session, split, paths, args):
             print(f"  would upload {staged_name(session, os.path.basename(path))}")
         if len(paths) > 3:
             print(f"  ... and {len(paths) - 3} more")
-        return len(paths), 0
+        return len(paths), []
 
     tags = list(args.tag) + [session]
     ok, failed = 0, []
@@ -165,7 +166,7 @@ def upload_session(project, session, split, paths, args):
         print(f"  FAILED {name}: {err}")
     if len(failed) > 5:
         print(f"  ... and {len(failed) - 5} more failures")
-    return ok, len(failed)
+    return ok, failed
 
 
 def main(argv=None):
@@ -237,7 +238,17 @@ def main(argv=None):
     for session, split, paths in plan:
         ok, failed = upload_session(project, session, split, paths, args)
         total_ok += ok
-        total_failed += failed
+        total_failed += len(failed)
+        if ok and not args.dry_run:
+            # Which frames went up, so roboflow_prelabel.py can leave them alone:
+            # proposing machine boxes over a frame a human hand-labelled is how
+            # the careful work gets buried under the cheap work.
+            failed_names = {name for name, _ in failed}
+            sent = [p for p in paths
+                    if staged_name(session, os.path.basename(p)) not in failed_names]
+            total = record_uploaded(os.path.join(args.images_dir, session), sent, split)
+            print(f"  recorded {len(sent)} frames in {session}/uploaded.json "
+                  f"({total} total)")
 
     print("\n" + "=" * 68)
     by_split = {}

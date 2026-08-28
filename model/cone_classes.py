@@ -55,6 +55,59 @@ def class_names_from_msg(msg_path=None):
     return tuple(found[i] for i in expected)
 
 
+UPLOADED_FILENAME = "uploaded.json"
+
+
+def uploaded_path(session_dir):
+    return os.path.join(session_dir, UPLOADED_FILENAME)
+
+
+def read_uploaded(session_dir):
+    """Frame filenames already sent to Roboflow from this session, as a set.
+
+    Written by roboflow_upload.py, read by roboflow_prelabel.py so a model does
+    not propose boxes over frames a human already labelled by hand. Absent file
+    means nothing was recorded, which is not the same as nothing was uploaded --
+    the sessions uploaded before this existed need backfilling.
+    """
+    import json
+    try:
+        with open(uploaded_path(session_dir), encoding="utf-8") as fh:
+            return set(json.load(fh).get("frames", []))
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{uploaded_path(session_dir)} is unreadable: {exc}")
+
+
+def record_uploaded(session_dir, frames, split=None):
+    """Merge `frames` into the session's uploaded record. Returns the new total.
+
+    Merged rather than overwritten: a session is often uploaded in more than one
+    pass -- a hand-label batch first, the rest later -- and the record has to
+    describe all of it.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    existing = read_uploaded(session_dir)
+    merged = sorted(existing | {os.path.basename(f) for f in frames})
+    doc = {
+        "_readme": ("Frames of this session that have been uploaded to Roboflow. "
+                    "roboflow_prelabel.py skips these so v1 does not propose boxes "
+                    "over frames a human already labelled."),
+        "updated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "split": split,
+        "frames": merged,
+    }
+    tmp = uploaded_path(session_dir) + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, uploaded_path(session_dir))
+    return len(merged)
+
+
 def resolve_class_names(msg_path=None, quiet=False):
     """(names, where_they_came_from) — the .msg when reachable, else the fallback."""
     try:
