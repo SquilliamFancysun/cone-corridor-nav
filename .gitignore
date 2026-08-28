@@ -30,6 +30,12 @@ model/training/runs/
 # Commit stamp written by model/capture/deploy.sh at deploy time
 model/capture/VERSION
 
+# Measured on the car by `lidar_view.py --calibrate` and only true of that car's
+# mount. deploy.sh never pushes it, so a copy in git would be a second set of
+# numbers that nothing reads. The human record is the flags line in
+# model/capture/README.md.
+model/capture/calibration.json
+
 # Recorded bags are large; keep CSV summaries in git instead
 *.db3
 *.mcap

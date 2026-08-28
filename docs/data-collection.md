@@ -129,7 +129,7 @@ print(d.getUsbSpeed().name, d.getConnectedCameras())"
 # expect: SUPER [<RGB>, <LEFT>, <RIGHT>]
 ```
 
-### 4.3 Lidar streaming
+### 4.3 Lidar streaming — and its calibration
 
 ```bash
 cd ~/cone_capture_tool && python lidar_view.py --selftest
@@ -142,6 +142,17 @@ Expect roughly:
 CRC: 1221 ok, 0 bad (0.00%)
   matches docs/hardware-baseline.md.
 ```
+
+Then check the mount calibration is still there — it is per-mount, not per-run,
+and step 6 makes it:
+
+```bash
+cat ~/cone_capture_tool/calibration.json    # mirror, angle_offset_deg, when
+```
+
+No such file, or the lidar has been moved since the date in it? Do
+[step 6](#6-calibrate-the-lidar-bearing--once-per-mount) before recording
+anything.
 
 It exits non-zero and names the likely cause if anything is off — a slow motor
 points at the 5 V rail (the hub, not the Pi), CRC failures point at the cable.
@@ -258,31 +269,68 @@ Add a **3D panel** for `/scan` and a **Raw Messages** panel for `/lidar_status`.
 
 **Do this before the first real session, and again any time the lidar is
 remounted.** It takes about a minute and catches an error that is invisible
-afterwards.
+afterwards: a mirrored corridor, where every range is correct, nothing on screen
+looks wrong, and the centreline steers into the wrong boundary at a junction.
 
-Put **one cone at 1.0 m, about 45° to the left**, nothing else nearby. Watch the
-3D panel:
+Stop pane 3 first — only one process may hold the serial port.
 
-| What you see | What it means | Fix |
+```bash
+cd ~/cone_capture_tool
+python lidar_view.py --calibrate
+```
+
+You need **one cone and a tape measure**. The tool asks for two poses, measures
+about twenty revolutions at each, and solves for the sign and the yaw together:
+
+```
+  Place the cone 1.00 m away, 45 deg LEFT of straight ahead.
+  Stand clear, then press Enter or button 2:
+    sensor bearing  312.94 deg   1.004 m   14.2 pts/scan   +-0.12 deg over 20 scans
+
+  Place the cone 1.00 m away, 45 deg RIGHT of straight ahead.
+  Stand clear, then press Enter or button 2:
+    sensor bearing  223.01 deg   0.998 m   14.1 pts/scan   +-0.14 deg over 20 scans
+--------------------------------------------------------------------
+  mirror        True
+  angle offset  -8.00 deg
+  residual      0.01 deg (the opposite sign: 89.99 deg)
+```
+
+Measure the 1.0 m and the 45° **from the lidar**, not from the bumper, and be
+somewhere else when you press the button — you are a 1 m obstacle too. Left is
+positive, the same sense as y-left in the survey.
+
+**Two poses is not belt-and-braces, it is the method.** One cone cannot separate
+a mirrored sign from a yaw offset: both signs fit a single bearing exactly, at
+different offsets. It is the *second* pose that decides, and the losing sign's
+residual (89.99° above) is the proof it was decided. The tool refuses one pose,
+and refuses two that sit within 20° of each other.
+
+### Read these three numbers before you accept it
+
+| Number | Want | If not |
 |---|---|---|
-| Front-left, 1.0 m | Correct | nothing |
-| Front-**right** | Bearing sign is inverted | add `--mirror` |
-| Right side, wrong angle | Sensor zero is not forward | set `--angle-offset N` |
+| `+-` spread per pose | under ~0.5° | Something moved, or a different object won on some scans |
+| `residual` | under ~1° | The cone was not where you told the tool it was |
+| the opposite sign | far larger | The poses failed to separate the two signs — spread them wider |
 
-Then move the cone to 45° right and confirm it follows.
+Then it reports where the car sees **itself** — the ~250 mm returns that are
+chassis, not obstacle — and checks that arc sits behind the lidar. An arc that
+comes out well off 180° means either the lidar is mounted off the centreline
+(say so with `--mount-y`) or the offset is wrong.
 
-**Keep the cone off-axis.** A cone directly ahead cannot detect a mirrored scan —
-a point on the x axis is its own reflection. The failure mode is a corridor that
-comes out mirrored: every range is correct, nothing looks wrong, and the
-centreline steers into the wrong boundary at a junction.
+### Where the numbers go
 
-Restart pane 3 with the flags you found, and **write them into
-[`model/capture/README.md`](../model/capture/README.md)** so nobody re-derives
-them at a track. They are also recorded in every `session.json`, so a session
-captured with the sign backwards is fixable at a desk rather than re-driven.
+The tool writes `calibration.json` beside itself on the car. Every later run of
+`lidar_view.py` loads it, prints what it loaded, and stamps it into
+`session.json` — nothing to retype at the track, and a run with no calibration
+warns loudly instead of quietly assuming zero.
 
-While you are here: note where the ~250 mm self-returns land. Those are the
-chassis, not obstacles.
+Copy the printed line into
+[`model/capture/README.md`](../model/capture/README.md) as well: the car is not
+backed up, and a remount is one screw away.
+
+Restart pane 3 and the calibrated scan is what you see.
 
 ---
 
@@ -375,7 +423,9 @@ Both are gitignored — keep extracted CSVs and per-run notes in
 | `capture_cones.py` cannot open the camera | DonkeyCar is holding it — check `myconfig_capture.py` has `CAMERA_TYPE="MOCK"` |
 | Camera links at 480 M under load | USB 2.0 cable, or not in a blue port. Must be USB-C to A, 3.0+, ≤ 1 m. |
 | Foxglove will not connect | Using the ssh alias instead of the IP, or the tool is running with `--no-live` |
-| Corridor is mirrored in Foxglove | Bearing sign — redo [step 6](#6-calibrate-the-lidar-bearing--once-per-mount) with an off-axis cone |
+| Corridor is mirrored in Foxglove | Bearing sign — redo [step 6](#6-calibrate-the-lidar-bearing--once-per-mount); the recording is still fixable at a desk, the raw bearings are untouched |
+| `--calibrate` finds nothing in the range band | The cone is outside it, or below the scan plane. Check the lidar's height against the cone's, then widen `--cal-tolerance` |
+| `--calibrate` says the two signs fit equally | The poses were too close together, or on-axis. One well left, one well right |
 | Rotation below 9.9 Hz | The lidar's 5 V rail — that is the powered hub, not the Pi |
 | CRC drops climbing | Cable, before it is anything else |
 | Gamepad button does nothing | F710 switch is in D, not X — indices differ. Re-probe. |

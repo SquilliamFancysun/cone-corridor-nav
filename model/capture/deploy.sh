@@ -17,11 +17,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The car gets the tool by rsync, not by clone, so stamp the commit in by hand.
 git -C "$HERE" rev-parse --short HEAD > "$HERE/VERSION" 2>/dev/null || echo "unknown" > "$HERE/VERSION"
 
+# calibration.json is written on the car by `lidar_view.py --calibrate` and
+# describes this car's lidar mount. --delete would take it out on every deploy,
+# and the next session would then record an unverified bearing sign without
+# anyone noticing, so it is excluded from both halves of the sync.
 rsync -av --delete \
   --exclude='__pycache__' \
   --exclude='.pytest_cache' \
   --exclude='test_*.py' \
   --exclude='fixtures' \
+  --exclude='calibration.json' \
   --exclude='myconfig_capture.py' \
   "$HERE/" "$HOST:cone_capture_tool/"
 
@@ -38,6 +43,11 @@ echo "  2)  source ~/env/bin/activate && cd ~/cone_capture_tool"
 echo "      python capture_cones.py --session-label lot-sun-A"
 echo "  3)  source ~/env/bin/activate && cd ~/cone_capture_tool"
 echo "      python lidar_view.py --session-label lot-sun-A"
+echo
+echo "First time on this mount — measure the lidar bearing before pane 3."
+echo "One cone, two poses, about a minute; the numbers are then reused"
+echo "automatically by every later run:"
+echo "      python lidar_view.py --calibrate"
 echo
 echo "For the depth demo instead of pane 2 — depth_view.py and capture_cones.py"
 echo "both open the OAK-D, so they are mutually exclusive:"

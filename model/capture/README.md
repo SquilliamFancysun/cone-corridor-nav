@@ -245,21 +245,80 @@ Ranges are unaffected by any of this; only bearing is. The failure mode is a
 mirrored corridor — a cone on the left appears on the right, every range checks
 out, and the centerline steers into the wrong boundary at a junction.
 
-**The check.** One cone at 1.0 m, about 45° to the **left**, nothing else near:
+### Measuring it — `--calibrate`
 
-- Front-left (+x, +y) at 1.0 m → correct.
-- Front-**right** → the sign is inverted, add `--mirror`.
-- Right bearing but rotated → that is the yaw, set `--angle-offset`.
+Do this once per mount, before the first real session, and again any time the
+lidar is moved. It takes about a minute.
 
-A cone placed *directly ahead* cannot detect the mirror: a point on the x axis
-is its own reflection. Keep it off-axis. Then move it to 45° right and confirm
-it follows. Record the flags you ended up with here in this file so nobody
-re-derives them at a track:
+```
+python lidar_view.py --calibrate
+```
 
-    verified mount flags: (fill in after the first run)
+One cone, two poses. The tool prompts for each, measures ~20 revolutions,
+solves for the sign and the yaw together, saves them, and prints the flags:
 
-Both flags land in `session.json`, so a session recorded with the sign backwards
-is fixable at a desk instead of re-driven.
+```
+  Place the cone 1.00 m away, 45 deg LEFT of straight ahead.
+  Stand clear, then press Enter or button 2:
+    sensor bearing  312.94 deg   1.004 m   14.2 pts/scan   +-0.12 deg over 20 scans
+
+  Place the cone 1.00 m away, 45 deg RIGHT of straight ahead.
+  Stand clear, then press Enter or button 2:
+    sensor bearing  223.01 deg   0.998 m   14.1 pts/scan   +-0.14 deg over 20 scans
+--------------------------------------------------------------------
+  mirror        True
+  angle offset  -8.00 deg
+  residual      0.01 deg (the opposite sign: 89.99 deg)
+```
+
+**Two poses, not one, and this is the whole reason for the tool.** A single cone
+cannot separate a mirrored sign from a yaw offset: any one bearing is fit
+exactly by *both* signs, at offsets that differ. Two poses over-determine the
+fit by one degree of freedom, which is what makes the residual mean something —
+and what makes the losing sign's residual (89.99° above) the evidence that the
+question was actually settled. The tool refuses fewer than two poses, and
+refuses two that sit within 20° of each other.
+
+Bearings are car bearings: counterclockwise from straight ahead, **left
+positive**, the same sense as y-left everywhere else in this repo. Measure them
+from the **lidar**, not from the bumper. `--cal-bearings 45,-45,90` adds a third
+pose if you want a residual with more to say; `--cal-range` and `--cal-tolerance`
+move the range band the cone is looked for in.
+
+The run also reports where the car sees **itself** — the persistent near returns
+that are chassis, not obstacle — and checks that arc sits behind the lidar,
+which is a free sanity check on the offset it just solved.
+
+### What it writes, and what reads it
+
+`calibration.json`, beside the tool on the car. Every later run of
+`lidar_view.py` loads it, prints what it loaded, and records it in
+`session.json`; an explicit `--mirror` / `--angle-offset` still overrides it, and
+`--no-calibration` ignores it. A run with neither says so, loudly:
+
+```
+warning: no calibration found and no --mirror/--angle-offset given.
+         The bearing sign is unverified...
+```
+
+That is a warning and not an error on purpose — `/scan_raw` and `scans.jsonl`
+store the sensor's own bearings untouched, so a session recorded against the
+wrong sign is fixable at a desk instead of re-driven. It is still a session
+nobody can interpret without going back to the car.
+
+`deploy.sh` excludes `calibration.json` from its `--delete`, so a redeploy does
+not wipe it. Copy the printed line here anyway, because the car is not backed up:
+
+    verified mount flags: (fill in after the first --calibrate run)
+
+### `--angle-offset` and `--mount-yaw` are not the same knob
+
+`--angle-offset` rotates the bearings *within* the lidar frame; `--mount-yaw`
+rotates the whole `base_link` → `lidar` transform published on `/tf`. Set both
+and the scan is rotated twice. The calibrated offset already points the bearings
+forward, so leave `--mount-yaw` at 0 — `--mount-x/-y/-z` are the tape-measure
+numbers for where the sensor sits, and those you do want. The tool warns if both
+rotations are non-zero.
 
 ### Useful flags
 
@@ -267,7 +326,12 @@ is fixable at a desk instead of re-driven.
 |---|---|---|
 | `--session-label` | `session` | Describes the conditions; becomes the directory name |
 | `--record-button` | 2 | X — the same button the camera tool uses, so one press records both |
-| `--mirror` / `--angle-offset` | — | Set from the cone check above |
+| `--calibrate` | — | Measure the two below from cones at known bearings, save, exit |
+| `--cal-bearings` | `45,-45` | Car bearings of the poses, left positive. At least two |
+| `--cal-range` / `--cal-tolerance` | 1.0 / 0.4 | Metres: where the cone is, and the band searched |
+| `--cal-scans` | 20 | Revolutions measured per pose |
+| `--mirror` / `--angle-offset` | from `calibration.json` | Override the measured convention |
+| `--no-calibration` | — | Ignore `calibration.json` entirely |
 | `--mount-x/-y/-z/--mount-yaw` | 0 | Lidar position in `base_link`, metres and degrees |
 | `--bins` | 450 | Angular bins for the drawn scan, ~0.8° |
 | `--no-joystick --duration N` | — | Record without a gamepad, for smoke tests |
@@ -407,9 +471,10 @@ Existing files are never overwritten.
 
 ## Tests
 
-`session.py` and `ld06.py` are pure Python — naming, the sampling clock,
-manifest assembly, CRC, angle interpolation, the revolution boundary — so the
-parts that can be wrong quietly are testable with no car:
+`session.py`, `ld06.py` and `calibrate.py` are pure Python — naming, the
+sampling clock, manifest assembly, CRC, angle interpolation, the revolution
+boundary, clustering and the bearing solver — so the parts that can be wrong
+quietly are testable with no car:
 
 ```
 uv run --with pytest python -m pytest -q
@@ -422,6 +487,12 @@ make one on the car and commit it:
 ```
 python lidar_view.py --dump-raw fixtures/ld06_sample.bin --no-joystick --duration 3
 ```
+
+`test_calibrate.py` synthesizes scans containing a cone at a bearing chosen from
+a known convention and checks the solver recovers it, including the cases where
+it must refuse to answer: one pose, two poses too close together, and a cone
+dead ahead — a point on the x axis is its own reflection, so an on-axis pair
+fits both signs equally and the fit has to say so.
 
 `joystick.py`, `capture_cones.py`, `depth_view.py` and the serial half of
 `lidar_view.py` need the hardware; verify those with `--probe-buttons`,

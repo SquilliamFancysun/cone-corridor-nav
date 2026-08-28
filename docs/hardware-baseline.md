@@ -241,7 +241,8 @@ track spec, **then** deploy, **then** capture.
 **The lidar sees the car.** Returns at ~250 mm around 184° are the chassis, not an
 obstacle. This is what `LIDAR_LOWER_LIMIT = 90` / `LIDAR_UPPER_LIMIT = 270` exist
 to mask. _Tell:_ confirm the masked arc matches your actual mount before trusting
-scan geometry.
+scan geometry — `lidar_view.py --calibrate` measures it, as the arc of near
+returns that is present on every revolution rather than on some of them.
 
 ## Software on the car
 

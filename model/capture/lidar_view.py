@@ -22,10 +22,12 @@ driver at the same time as this.
 import argparse
 import math
 import os
+import select
 import sys
 import time
 from contextlib import ExitStack
 
+import calibrate
 from ld06 import LD06Decoder, ScanAssembler, bin_scan
 from session import ScanSessionWriter
 
@@ -250,6 +252,222 @@ def run_selftest(port, seconds):
     return 0 if ok else 1
 
 
+def collect_scans(handle, count, timeout=20.0):
+    """Read `count` whole revolutions, or as many as arrive before the timeout.
+
+    Fresh decoder and assembler each time: the assembler discards its first
+    revolution by design, and joining mid-rotation is exactly what happens when
+    a pose starts, so reusing one across poses would fold half a revolution of
+    the previous pose into this one.
+    """
+    decoder, assembler = LD06Decoder(), ScanAssembler()
+    scans = []
+    t0 = time.monotonic()
+    while len(scans) < count and time.monotonic() - t0 < timeout:
+        chunk = handle.read(4096)
+        if not chunk:
+            time.sleep(0.002)
+            continue
+        for packet in decoder.feed(chunk):
+            scan = assembler.add(packet)
+            if scan is not None:
+                scans.append(scan)
+    return scans, decoder
+
+
+def wait_for_go(prompt, handle, joystick, button):
+    """Block until Enter or the record button, draining the port meanwhile.
+
+    The draining matters: the kernel buffer fills in a couple of seconds at
+    19 KB/s, and a pose measured from bytes captured while the cone was still
+    being carried into place is worse than no measurement, because it looks
+    fine.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    while True:
+        handle.read(4096)
+        if joystick is not None and joystick.connected:
+            for event in joystick.poll():
+                if event.pressed and event.number == button:
+                    print()
+                    return
+        if select.select([sys.stdin], [], [], 0)[0]:
+            sys.stdin.readline()
+            return
+
+
+def parse_bearings(text):
+    """"45,-45" -> [45.0, -45.0], car bearings, counterclockwise from forward."""
+    try:
+        values = [float(part) for part in text.split(",") if part.strip()]
+    except ValueError:
+        raise ValueError(f"cannot read --cal-bearings {text!r} as a list of degrees")
+    if len(values) < 2:
+        raise ValueError(
+            "--cal-bearings needs at least two poses: one cone cannot separate a "
+            "mirrored sign from a yaw offset, since both fit a single point exactly")
+    return values
+
+
+def run_calibration(args):
+    """Measure the bearing convention from cones at known bearings.
+
+    The procedure README.md describes by eye, done with arithmetic and written
+    down. Prints the flags, and saves them so the next recording run picks them
+    up without anyone retyping a sign at a track.
+    """
+    joystick = None
+    if not args.no_joystick and Joystick is not None:
+        try:
+            joystick = Joystick(args.device)
+        except JoystickNotFound:
+            # Not fatal here: unlike recording, this loop has a keyboard.
+            print("note: no gamepad; press Enter at each pose instead.")
+
+    try:
+        bearings = parse_bearings(args.cal_bearings)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    target_mm = args.cal_range * 1000.0
+    tol_mm = args.cal_tolerance * 1000.0
+    handle = open_serial(args.port, BAUD)
+    time.sleep(0.3)
+    handle.reset_input_buffer()
+
+    print(f"Bearing calibration — {len(bearings)} poses, cone at "
+          f"{args.cal_range:.2f} m, accepting {(target_mm - tol_mm) / 1000:.2f}"
+          f"-{(target_mm + tol_mm) / 1000:.2f} m.")
+    print("Clear everything else out of that range band, and stand outside it.")
+
+    observations = []
+    all_scans = []
+    last_decoder = None
+    try:
+        for bearing in bearings:
+            side = "LEFT" if bearing > 0 else "RIGHT" if bearing < 0 else "AHEAD"
+            wait_for_go(
+                f"\n  Place the cone {args.cal_range:.2f} m away, "
+                f"{abs(bearing):.0f} deg {side} of straight ahead.\n"
+                f"  Stand clear, then press Enter"
+                + (f" or button {args.record_button}" if joystick else "") + ": ",
+                handle, joystick, args.record_button)
+
+            handle.reset_input_buffer()
+            scans, last_decoder = collect_scans(handle, args.cal_scans)
+            all_scans.extend(scans)
+            if not scans:
+                raise SystemExit(
+                    "error: no complete revolutions arrived. Run --selftest.")
+
+            obs = calibrate.measure_pose(scans, bearing, target_mm, tol_mm)
+            if obs is None:
+                raise SystemExit(
+                    f"error: nothing found between "
+                    f"{(target_mm - tol_mm) / 1000:.2f} and "
+                    f"{(target_mm + tol_mm) / 1000:.2f} m in any of "
+                    f"{len(scans)} scans.\n"
+                    f"       The cone is outside the range band, too small a "
+                    f"target at this\n       distance, or below the scan plane. "
+                    f"Widen with --cal-tolerance, or\n       check the height of "
+                    f"the lidar against the height of the cone.")
+
+            print(f"    sensor bearing {obs.bearing_deg:7.2f} deg   "
+                  f"{obs.range_mm / 1000:.3f} m   "
+                  f"{obs.points:.1f} pts/scan   "
+                  f"+-{obs.spread_deg:.2f} deg over {obs.scans} scans")
+            if obs.spread_deg > 2.0:
+                print(f"    warning: {obs.spread_deg:.1f} deg of scatter across "
+                      f"scans. Something moved, or a different\n"
+                      f"             object won on some scans.")
+            if obs.ambiguous_scans:
+                print(f"    warning: a second object was in the range band on "
+                      f"{obs.ambiguous_scans}/{obs.scans} scans.\n"
+                      f"             The larger one was taken. Clear the area "
+                      f"and re-run.")
+            observations.append(obs)
+    finally:
+        handle.close()
+        if joystick is not None:
+            joystick.close()
+
+    try:
+        solution = calibrate.solve_convention(observations)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    arcs = calibrate.chassis_arcs(all_scans)
+
+    print("\n" + "-" * 68)
+    print(f"  mirror        {solution.mirror}")
+    print(f"  angle offset  {solution.angle_offset_deg:+.2f} deg")
+    print(f"  residual      {solution.residual_deg:.2f} deg "
+          f"(the opposite sign: {solution.rival_residual_deg:.2f} deg)")
+    print("-" * 68)
+
+    for obs in observations:
+        got = solution.car_bearing(obs.bearing_deg)
+        print(f"  cone at {obs.expected_deg:+6.1f} deg reads "
+              f"{got:+6.1f} deg   (off by {abs(calibrate.wrap180(got - obs.expected_deg)):.2f} deg)")
+
+    ok = True
+    if not solution.decisive:
+        # Both signs fit about as well, which means the poses did not actually
+        # test the thing this whole procedure exists to test.
+        print("\n  warning: the two signs fit almost equally well "
+              f"({solution.residual_deg:.1f} vs {solution.rival_residual_deg:.1f} deg).")
+        print("           The poses did not separate them. Use one cone well "
+              "left and one well right.")
+        ok = False
+    if solution.residual_deg > 5.0:
+        print(f"\n  warning: {solution.residual_deg:.1f} deg residual — the poses "
+              f"disagree about the offset.")
+        print("           Check that the cone really sat at the bearings you "
+              "told the tool, measured\n           from the lidar, not from the "
+              "bumper.")
+        ok = False
+
+    if arcs:
+        print("\n  Self-returns (the car, not the world), sensor bearings:")
+        for arc in arcs:
+            print(f"    {arc.start_deg:5.0f}-{arc.end_deg:5.0f} deg  "
+                  f"{arc.near_mm:.0f}-{arc.far_mm:.0f} mm   "
+                  f"-> car bearing {solution.car_bearing(arc.mid_deg):+.0f} deg "
+                  f"+-{arc.width_deg / 2:.0f} deg")
+        widest = max(arcs, key=lambda a: a.width_deg)
+        skew = calibrate.wrap180(solution.car_bearing(widest.mid_deg) - 180.0)
+        print("\n  The chassis should sit behind the lidar: car bearing 180 deg.")
+        print(f"  The widest arc is centred {abs(skew):.0f} deg "
+              f"{'left' if skew > 0 else 'right'} of that.")
+        if abs(skew) > 20.0:
+            print("  That is a lot. Either the lidar is mounted well off the "
+                  "car's centreline\n  (say so with --mount-y) or the offset "
+                  "above is wrong.")
+    else:
+        print("\n  No persistent near returns: nothing of the car is in the "
+              "scan plane.")
+
+    mount = {"x": args.mount_x, "y": args.mount_y, "z": args.mount_z,
+             "yaw_deg": args.mount_yaw}
+    health_stats = None
+    if last_decoder is not None:
+        health_stats = {"crc_drop_rate": round(last_decoder.drop_rate, 5)}
+    record = calibrate.build_record(
+        solution, arcs=arcs, mount=mount, health=health_stats,
+        notes=args.notes, git_commit=tool_commit(), target_mm=target_mm)
+    path = calibrate.save(record, args.calibration)
+
+    print(f"\n  Saved to {path}")
+    print("  lidar_view.py now uses these unless you override them. "
+          "Explicitly, they are:")
+    print(f"\n      python lidar_view.py --session-label lot-A "
+          f"{solution.flags()}\n")
+    print("  Copy that line into model/capture/README.md, under "
+          "'verified mount flags'.")
+    return 0 if ok else 1
+
+
 def tool_commit():
     """Commit stamped in by deploy.sh, since the car has no git repo."""
     version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
@@ -276,10 +494,13 @@ def parse_args(argv=None):
     parser.add_argument("--port-ws", type=int, default=8765, help="Foxglove server port")
     parser.add_argument("--bins", type=int, default=DEFAULT_BINS,
                         help=f"angular bins for the drawn scan (default: {DEFAULT_BINS})")
-    parser.add_argument("--mirror", action="store_true",
-                        help="flip the bearing sign; set this from the cone check "
-                             "in README.md, not from reasoning about the mount")
-    parser.add_argument("--angle-offset", type=float, default=0.0,
+    # Both default to None, not to False/0.0, so "not given" is
+    # distinguishable from "deliberately zero" — that is what lets
+    # calibration.json fill them in without overriding an explicit flag.
+    parser.add_argument("--mirror", action="store_true", default=None,
+                        help="flip the bearing sign; set by --calibrate, not by "
+                             "reasoning about the mount")
+    parser.add_argument("--angle-offset", type=float, default=None,
                         help="degrees of yaw between the lidar's zero and forward")
     parser.add_argument("--mount-x", type=float, default=0.0,
                         help="lidar position in base_link, metres")
@@ -301,18 +522,94 @@ def parse_args(argv=None):
     parser.add_argument("--no-jsonl", action="store_true", help="skip scans.jsonl")
     parser.add_argument("--selftest", action="store_true",
                         help="3s of link stats against the hardware baseline, then exit")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="measure --mirror and --angle-offset from cones at "
+                             "known bearings, then save them and exit")
+    parser.add_argument("--cal-bearings", default="45,-45",
+                        help="car bearings of the calibration poses, degrees "
+                             "counterclockwise from forward, left positive "
+                             "(default: 45,-45)")
+    parser.add_argument("--cal-range", type=float, default=1.0,
+                        help="metres from the lidar to the calibration cone")
+    parser.add_argument("--cal-tolerance", type=float, default=0.4,
+                        help="metres of range either side of --cal-range in which "
+                             "the cone is looked for")
+    parser.add_argument("--cal-scans", type=int, default=20,
+                        help="revolutions measured per pose (default: 20, ~2 s)")
+    parser.add_argument("--calibration", default=None,
+                        help="path to calibration.json (default: beside this tool)")
+    parser.add_argument("--no-calibration", action="store_true",
+                        help="ignore calibration.json; use the flags as given")
     parser.add_argument("--dump-raw", default=None,
                         help="also write raw serial bytes here, for test fixtures")
     parser.add_argument("--notes", default=None, help="free text into session.json")
     args = parser.parse_args(argv)
 
-    if args.no_joystick and args.duration is None and not args.selftest:
+    if args.no_joystick and args.duration is None and not (args.selftest or args.calibrate):
+        # Recording without a gamepad has nothing to end it. Calibration ends
+        # itself after the last pose, so there it is a normal way to run.
         parser.error("--no-joystick needs --duration (nothing would ever stop it)")
     if args.no_mcap and args.no_jsonl:
         parser.error("--no-mcap and --no-jsonl together would record nothing")
     if args.bins < 8:
         parser.error(f"--bins {args.bins} is too coarse to be worth drawing")
+    if args.calibration is None:
+        args.calibration = calibrate.default_path()
+    if args.calibrate:
+        if args.cal_scans < 1:
+            parser.error("--cal-scans must be at least 1")
+        if args.cal_tolerance <= 0 or args.cal_range <= 0:
+            parser.error("--cal-range and --cal-tolerance are metres, and positive")
     return args
+
+
+def resolve_convention(args):
+    """Settle mirror and angle offset, and say where they came from.
+
+    Recorded into session.json: "these are the numbers" is not provenance, and
+    a session captured against an unverified sign should announce itself as one
+    rather than be indistinguishable from a calibrated run.
+    """
+    given = args.mirror is not None or args.angle_offset is not None
+    record = None
+    if not args.no_calibration:
+        try:
+            record = calibrate.load(args.calibration)
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}")
+
+    if given:
+        args.mirror = bool(args.mirror)
+        args.angle_offset = args.angle_offset or 0.0
+        source = "command line"
+        if record and (record["mirror"] != args.mirror
+                       or abs(record["angle_offset_deg"] - args.angle_offset) > 0.5):
+            print(f"note: overriding {args.calibration} "
+                  f"(mirror={record['mirror']}, "
+                  f"offset={record['angle_offset_deg']:+.1f} deg).")
+        return source
+
+    if record:
+        args.mirror = bool(record["mirror"])
+        args.angle_offset = float(record["angle_offset_deg"])
+        stamp = record.get("measured_utc", "unknown date")
+        print(f"Bearing convention from {args.calibration} ({stamp}): "
+              f"mirror={args.mirror}, offset={args.angle_offset:+.1f} deg")
+        return f"calibration.json {stamp}"
+
+    args.mirror = False
+    args.angle_offset = 0.0
+    # Not fatal — the raw bearings go into the recording untouched, so this is
+    # fixable at a desk. But it is the error that looks like nothing.
+    if args.no_calibration:
+        print("warning: --no-calibration, and no --mirror/--angle-offset to replace it.")
+    else:
+        print("warning: no calibration found and no --mirror/--angle-offset given.")
+    print("         The bearing sign is unverified: a mirrored corridor looks "
+          "entirely correct")
+    print("         until the centerline steers into the wrong boundary. Run:")
+    print("           python lidar_view.py --calibrate")
+    return "uncalibrated"
 
 
 def main(argv=None):
@@ -320,6 +617,19 @@ def main(argv=None):
 
     if args.selftest:
         return run_selftest(args.port, 3.0)
+
+    if args.calibrate:
+        return run_calibration(args)
+
+    convention_source = resolve_convention(args)
+    if args.angle_offset and args.mount_yaw:
+        # log_scan rotates the bearings by --angle-offset and log_transform
+        # rotates the whole frame by --mount-yaw, so setting both applies the
+        # yaw twice and the scan lands at double the angle.
+        print(f"warning: --angle-offset {args.angle_offset:+.1f} and --mount-yaw "
+              f"{args.mount_yaw:+.1f} both rotate the scan.")
+        print("         The calibrated offset already points the bearings "
+              "forward; leave --mount-yaw at 0.")
 
     joystick = None
     if not args.no_joystick:
@@ -358,6 +668,7 @@ def main(argv=None):
         "direction": "cw_native",
         "mirrored": args.mirror,
         "angle_offset_deg": args.angle_offset,
+        "convention_source": convention_source,
         "mount": {"x": args.mount_x, "y": args.mount_y, "z": args.mount_z,
                   "yaw_deg": args.mount_yaw},
         "bins": args.bins,
