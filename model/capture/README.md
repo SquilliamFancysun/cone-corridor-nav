@@ -7,8 +7,11 @@ involved:
   D1 dataset.
 - **`lidar_view.py`** — live Foxglove view of the LD06 plus scan recording, for
   developing the centerfinding algorithm against real track data.
+- **`depth_view.py`** — live Foxglove view of the OAK-D Lite's stereo depth, as
+  a 16-bit depth image, a colorized heat map and a point cloud.
 
-They own different devices, so they run side by side.
+The lidar tool owns the LD06; the two camera tools both want the OAK-D, so those
+two are mutually exclusive. Lidar plus either camera tool runs side by side.
 
 This file is the reference for the two tools. For the procedure — build the
 track, preflight, run all three panes, pull the data — see
@@ -265,6 +268,117 @@ The first revolution of every session is discarded — the tool joins the stream
 mid-rotation, so that one is always partial, and a half scan reads downstream as
 a corridor that abruptly ends.
 
+## Camera: depth
+
+`depth_view.py` streams the OAK-D Lite's stereo depth to Foxglove Studio. It is
+the demo tool — it records nothing unless you ask — and it is the quickest proof
+that the depth half of the camera works at all.
+
+### It takes the camera from capture_cones.py
+
+Same ownership rule, and this tool is on the *other* side of it: `depth_view.py`
+and `capture_cones.py` both open the OAK-D, so only one can run. DonkeyCar still
+needs `myconfig_capture.py` (`CAMERA_TYPE="MOCK"`) either way. The second opener
+gets `X_LINK_DEVICE_ALREADY_IN_USE`, and the tool says so rather than printing
+the raw exception.
+
+The lidar is a separate device, so `lidar_view.py` keeps running throughout —
+which is the point of the port split below.
+
+### Install
+
+```
+~/env/bin/pip install foxglove-sdk        # needs Python 3.10+
+```
+
+Same package `lidar_view.py` needs; `depthai`, `cv2` and `numpy` are already in
+`~/env`. Unlike the lidar tool this one has no non-Foxglove fallback, so it exits
+with the install line instead of half-running.
+
+### Preflight
+
+```
+python depth_view.py --selftest
+```
+
+Three seconds of depth against the baseline: USB link speed, frame rate, and
+what fraction of pixels got a stereo match. It exits non-zero and names the cause
+if any are off, so it is the camera half of re-verification — `SUPER` here is the
+`getUsbSpeed()` reading `docs/hardware-baseline.md` says never to infer from
+`lsusb`.
+
+A low valid fraction usually is not a fault: stereo needs texture, so a blank
+wall or open sky legitimately matches nothing. Point the car at the track.
+
+### Run
+
+```
+source ~/env/bin/activate && cd ~/cone_capture_tool
+python depth_view.py
+```
+
+Then in Foxglove Studio: **Open connection → Foxglove WebSocket →
+`ws://robocar:8766`** — 8766, not 8765, so the lidar view keeps its port and both
+stream at once. Add a **3D panel** for `/depth/points` and an **Image panel** for
+`/depth/colorized`.
+
+| Topic | What |
+|---|---|
+| `/depth/points` | Point cloud in the car frame, colorable by the `range` field |
+| `/depth/colorized` | JPEG heat map, near is hot. The one to point at during a demo |
+| `/depth/image` | Raw 16-bit millimetres, untouched. The one to measure from |
+| `/tf` | `base_link` → `camera` from the mount flags |
+| `/depth_status` | USB speed, fps, valid fraction, min/median/max range |
+
+`/depth/colorized` exists because Foxglove's Image panel renders a 16UC1 image
+as near-black until you hand-set its value range — a working sensor that looks
+broken. Measure from `/depth/image`; demo from `/depth/colorized`.
+
+### Frame convention
+
+Points come out in the car frame — x forward, y left, z up, REP-103 — not the
+camera's optical frame, so `/depth/points` and `lidar_view.py`'s `/scan` drop
+into one 3D panel and can be compared directly. The conversion happens on the
+car; nothing downstream needs to know about optical frames.
+
+Depth is registered to the **right** mono camera by default, which is where its
+intrinsics come from. `--align-rgb` registers it to the color camera instead;
+that is a narrower FOV and a 4:3 aspect against the mono 16:10, so the point
+cloud becomes approximate.
+
+### Range limits
+
+The Lite's stereo baseline is 7.5 cm, which puts the near limit around 35 cm at
+400p. `--extended` roughly halves that at the cost of far range; `--subpixel`
+trades the other way. They are mutually exclusive on this device and both are
+off by default.
+
+### Useful flags
+
+| Flag | Default | |
+|---|---|---|
+| `--fps` | 10 | Matches the lidar's revolution rate; keeps the stream near 2 MB/s |
+| `--max-range` | 10 | Metres. Caps the color ramp and drops farther points |
+| `--cloud-step` | 4 | Every Nth pixel into the cloud; 1 is ~16x the data |
+| `--mono-resolution` | `400p` | Or `480p`. The Lite's OV7251 does no more |
+| `--mount-x/-y/-z` | 0 | Camera position in `base_link`, metres |
+| `--mcap PATH` | — | Also record every topic, for replay off-car |
+| `--no-cloud` / `--no-colorized` | — | Drop a topic if the link is struggling |
+| `--duration N` | — | Stop after N seconds |
+| `--selftest` | — | Link and depth statistics, then exit |
+
+### Output
+
+Nothing, unless `--mcap` is given:
+
+```
+python depth_view.py --mcap ~/depth_capture/demo.mcap --duration 30
+```
+
+Drag that file into Foxglove on the laptop to scrub the run — which is the
+easiest way to get a depth figure into the report without the car present.
+Existing files are never overwritten.
+
 ## Tests
 
 `session.py` and `ld06.py` are pure Python — naming, the sampling clock,
@@ -283,6 +397,6 @@ make one on the car and commit it:
 python lidar_view.py --dump-raw fixtures/ld06_sample.bin --no-joystick --duration 3
 ```
 
-`joystick.py`, `capture_cones.py` and the serial half of `lidar_view.py` need the
-hardware; verify those with `--probe-buttons`, `--preview` and `--selftest` on
-the car.
+`joystick.py`, `capture_cones.py`, `depth_view.py` and the serial half of
+`lidar_view.py` need the hardware; verify those with `--probe-buttons`,
+`--preview` and `--selftest` on the car.

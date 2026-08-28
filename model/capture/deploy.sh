@@ -5,7 +5,7 @@
 # donkeycar already live in ~/env, and joystick.py deliberately avoids evdev
 # (which is not installed).
 #
-# lidar_view.py needs foxglove-sdk for the live view and the MCAP:
+# lidar_view.py and depth_view.py need foxglove-sdk for the live view and MCAP:
 #   ~/env/bin/pip install foxglove-sdk      (needs Python 3.10+)
 # Without it the tool still records scans.jsonl, so a failed install at the
 # track does not cost the run.
@@ -39,7 +39,11 @@ echo "      python capture_cones.py --session-label lot-sun-A"
 echo "  3)  source ~/env/bin/activate && cd ~/cone_capture_tool"
 echo "      python lidar_view.py --session-label lot-sun-A"
 echo
-echo "Then connect Foxglove Studio to ws://$HOST:8765"
+echo "For the depth demo instead of pane 2 — depth_view.py and capture_cones.py"
+echo "both open the OAK-D, so they are mutually exclusive:"
+echo "      python depth_view.py"
+echo
+echo "Then connect Foxglove Studio to ws://$HOST:8765 (lidar), ws://$HOST:8766 (depth)"
 echo
 echo "The label describes the conditions and becomes the session directory"
 echo "name — replace lot-sun-A with your own. Every line above is literal and"
