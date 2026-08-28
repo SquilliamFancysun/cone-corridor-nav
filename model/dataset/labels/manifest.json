@@ -7,13 +7,13 @@
     "yellow"
   ],
   "class_order_source": "/Users/home/Projects/MAE 148/cone-corridor-nav/ros2/src/cone_msgs/msg/LabeledCone.msg",
-  "exported_utc": "2026-08-28T15:15:47+00:00",
+  "exported_utc": "2026-08-28T15:44:49+00:00",
   "location": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1",
   "roboflow": {
     "format": "yolov8",
-    "project": null,
+    "project": "cone-detector-nfjog",
     "version": "1",
-    "workspace": null
+    "workspace": "r-william-thatcher-s-workspace"
   },
   "splits": [
     {

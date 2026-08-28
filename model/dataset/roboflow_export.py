@@ -368,6 +368,17 @@ def sync_labels(location, scans, class_names, labels_dir, meta):
     print(f"\nsynced labels + manifest.json -> {labels_dir}")
 
 
+def project_slug_from_location(location):
+    """Recover the project slug from an export directory named <project>-v<N>.
+
+    The last resort for a --no-download run, where no slug was ever supplied:
+    this script named the directory, so the slug is still in it.
+    """
+    name = os.path.basename(os.path.normpath(location))
+    head, sep, tail = name.rpartition("-v")
+    return head if sep and tail.isdigit() and head else None
+
+
 def rewrite_data_yaml(location, class_names, scans):
     """Point data.yaml at absolute paths, in the class order the .msg dictates.
 
@@ -450,10 +461,21 @@ def main(argv=None):
         return 1
 
     if not args.no_sync_labels:
+        # Resolved, not args: the slugs usually arrive as ROBOFLOW_WORKSPACE /
+        # ROBOFLOW_PROJECT, and recording the bare args wrote null for both.
+        # data.yaml tells the next person to "re-download it with --workspace
+        # ... --project ...", so a manifest that does not say which project is
+        # a dead end -- the slugs then have to be dug out of Roboflow's own
+        # README, or the account.
         meta = {
             "class_order_source": os.path.abspath(source),
-            "roboflow": {"workspace": args.workspace, "project": args.project,
-                         "version": args.version, "format": args.format},
+            "roboflow": {
+                "workspace": args.workspace or os.environ.get("ROBOFLOW_WORKSPACE"),
+                "project": (args.project or os.environ.get("ROBOFLOW_PROJECT")
+                            or project_slug_from_location(location)),
+                "version": args.version,
+                "format": args.format,
+            },
         }
         sync_labels(location, scans, class_names, os.path.expanduser(args.labels_dir), meta)
 
