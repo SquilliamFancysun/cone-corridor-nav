@@ -9,6 +9,10 @@
 
   <depend>rclpy</depend>
   <depend>cone_msgs</depend>
+  <!-- cone_nav consumes the LabeledCones cone_perception produces, and
+       shares its class-id constants. Data flows perception -> nav; this is
+       that edge, declared. -->
+  <depend>cone_perception</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
 

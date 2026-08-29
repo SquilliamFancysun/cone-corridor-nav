@@ -54,6 +54,7 @@ rather than snakes and the footprint drops to roughly 7 × 6 m.
 |---|---|---|
 | Corridor width | 1.5 m, uniform | No flare needed; nothing here requires a tight turn |
 | Branch divergence | ±25° from incoming centerline | Keeps both branches inside the ~69° HFOV |
+| Island nose | 1.78 m past each junction | `half_width / sin(divergence)` — see below |
 | Segment length | A 3 m, B 3.5 m, C 3 m | |
 | Cone spacing | 1.5 m on straights, 0.75 m through fork mouths and dead-end walls | Boundary ambiguity bites at the forks; straights tolerate sparse cones |
 | Dead-end stub | 1.5 m deep, walled across the end | Long enough that the car commits before the wall is obvious |
@@ -129,8 +130,16 @@ Use **one cone size for the entire track** and record it here and in
 `LabeledCone.msg` is `Z = f * h_real / h_pixels`; a mixed-height track silently
 corrupts that estimate for every cone that differs.
 
-- Cone height (base to tip): ____ m
+- Cone height (base to tip): **0.1778 m** (7 in) — measured 2026-08-28
 - Cone base width: ____ m
+
+Recorded in `cone_perception/extrinsics.py` as `CONE_HEIGHT_M`.
+
+The base width is still blank and that is a smaller gap than it looks: it feeds
+nothing. `range_bbox` uses the height, and the lidar's view of a cone is gated
+loosely on purpose (`cone_perception/clustering.py`) because the camera is what
+confirms a cluster is a cone. Measure it when convenient — it would let the
+size gate tighten — but nothing is blocked on it.
 
 ## Survey procedure
 
@@ -152,6 +161,37 @@ photo.
 
 This CSV is the D5 deliverable and the ground truth `analysis/` uses for
 cross-track error.
+
+## The fork is a region, not a point
+
+Two branches diverging by ±25° from a 1.5 m corridor do not separate at the
+junction. Their inner walls only cross at
+
+```
+nose = half_width / sin(divergence) = 0.75 / sin(25°) = 1.78 m
+```
+
+past it. Before that point the two corridors overlap and there is no island to
+put cones on — laying inner-wall cones from the junction outward builds two
+walls that intersect. The island nose belongs at 1.78 m, which is where "build
+the island nose as one yellow and one blue cone side by side" actually happens.
+
+**This makes the 1.5 m dead-end stub above impossible as specified.** A 1.5 m
+stub ends before the branches have separated, so it never becomes a corridor of
+its own — the car cannot be shown a stub it can commit to, because the stub and
+the through-branch are still the same widened space. Three ways out, in order of
+how little else they disturb:
+
+| Fix | Effect |
+|---|---|
+| **Stub 2.8 m** | Gives a metre of genuine walled corridor past the nose. Costs ~1.3 m of footprint per dead end and 2 more cones each |
+| **Divergence 35°** | Nose moves to 1.31 m, so a 1.5 m stub just works. Branches sit at ±35°, still inside the ~69° HFOV but with much less margin |
+| **Narrower corridor at the fork** | 1.2 m corridor puts the nose at 1.42 m. Contradicts "1.5 m, uniform" |
+
+`sim/cone_field.py` builds the 2.8 m version by default and
+`island_nose_distance()` is where the arithmetic lives; pass
+`track_v1(dead_end_length_m=1.5)` to generate the track exactly as written above
+and watch the boundary go ambiguous.
 
 ## Known consequence for the nav stack
 

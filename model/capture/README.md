@@ -9,9 +9,14 @@ involved:
   developing the centerfinding algorithm against real track data.
 - **`depth_view.py`** — live Foxglove view of the OAK-D Lite's stereo depth, as
   a 16-bit depth image, a colorized heat map and a point cloud.
+- **`fusion_view.py`** — the nav stack's perception layer, live: LD06 clusters
+  labelled with the classes the camera sees, and the corridor centerline drawn
+  through them.
 
 The lidar tool owns the LD06; the two camera tools both want the OAK-D, so those
 two are mutually exclusive. Lidar plus either camera tool runs side by side.
+`fusion_view.py` wants **both** sensors, so it runs instead of the other three,
+not alongside them.
 
 This file is the reference for the two tools. For the procedure — build the
 track, preflight, run all three panes, pull the data — see
@@ -35,6 +40,84 @@ Nothing to install for the camera: `depthai`, `cv2` and `donkeycar` are already
 in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants
 an SDL video driver we do not have over SSH). The lidar tool wants one package —
 see [Install](#install) below.
+
+## Fusion and the corridor centerline
+
+```
+python fusion_view.py --weights ~/models/best.pt
+```
+
+Foxglove on `ws://<car-ip>:8767`. Channels: `/scan` as the lidar tool draws it,
+`/cones` (every cluster, coloured by its label, **grey when UNLABELED**),
+`/centerline` (the chosen chain bright, rejected branches dim, gate midpoints as
+red spheres), and `/fusion_status`.
+
+### Why it owns both sensors
+
+`session.py` records each sample's `t` relative to *its own session's* first
+sample, so two separately-recorded sessions cannot be aligned better than the
+one-second resolution of `created_utc`. Fusing a camera stream against a lidar
+stream needs one clock, and one process is how you get one. That also makes the
+recording this tool writes the first camera+lidar data on this car that a replay
+harness can actually use.
+
+### It refuses to run without a calibration
+
+`lidar_view.py` only warns, because it **records**: a session captured against
+an unverified bearing sign stores the sensor's own bearings and is fixable at a
+desk. This tool **interprets** — it decides which side of the car each cone is
+on — and there is no fixing that afterwards. Run `lidar_view.py --calibrate`
+first.
+
+A mirrored mount is genuinely undetectable on a straight corridor driven down
+the middle: mirroring maps each blue cone exactly onto a yellow one, every box
+still finds a partner, and the only thing wrong is that each cone carries its
+mirror image's label. See `test_fusion_view.py` for that demonstrated rather
+than asserted.
+
+### `/fusion_status` is the panel to watch
+
+| Field | What a bad value means |
+|---|---|
+| `out_of_fov` | Normally **most** of the candidates. The lidar sweeps ~218°, the camera 69° |
+| `unmatched_in_fov` | Clusters the camera should have explained and did not. Persistently non-zero means the detector is missing cones, or `CAMERA_YAW_DEG` is wrong |
+| `matched` = 0 with detections > 0 | Almost always a yaw error bigger than the 4° gate. Nothing matches, rather than everything matching one cone to the left — which is the failure you want |
+| `stale` | Inference is slower than `--max-detection-age`. Drop `--imgsz` |
+| `unmatched_detections` | Expected to be large: the camera sees cones well past the lidar's reach |
+| `points_per_cluster` | Near 2 means the lidar is at its limit. See below |
+| `single_boundary_fallback` | The line is offset from one wall, not measured between two |
+
+### How far the lidar can actually see a cone
+
+Not far, and this bounds the whole corridor layer. At ~450 points per
+revolution the LD06's angular step is 0.8°, and a cone presents roughly a 6.5 cm
+cross-section at the height the scan plane cuts it:
+
+| Range | Subtends | Returns |
+|---|---|---|
+| 2.0 m | 1.9° | ~2.3 |
+| 3.0 m | 1.2° | ~1.6 |
+| 4.0 m | 0.9° | ~1.2 |
+
+Past ~3 m a cone is one return or none, and one return is indistinguishable from
+noise. The camera sees much further, which is why `unmatched_detections` is
+large and normal — but only the lidar gives range, so the centerline stops where
+the lidar does. `points_per_cluster` in `/fusion_status` is the measured version
+of this table; trust it over the arithmetic.
+
+### Detector backends
+
+`--detector` picks where boxes come from:
+
+| | |
+|---|---|
+| `ultralytics` | v1 `best.pt` on the Pi's CPU, ~3–5 fps at 416. Too slow to drive on; fine for validating fusion by hand-pushing the car |
+| `blob` | The OAK-D running the model itself. **Not implemented** — `model/export/` is empty |
+| `replay` | A recorded session's frames and `_prelabel` labels. No hardware; runs at a desk |
+
+The camera is configured to match `capture_cones.py` exactly — 416×234 16:9
+preview, exposure/WB/focus settled then locked — so the detector sees at
+inference the same framing and colours it trained on.
 
 ## Addressing the car
 

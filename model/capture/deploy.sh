@@ -13,6 +13,7 @@ set -euo pipefail
 
 HOST="${1:-robocar}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 
 # The car gets the tool by rsync, not by clone, so stamp the commit in by hand.
 git -C "$HERE" rev-parse --short HEAD > "$HERE/VERSION" 2>/dev/null || echo "unknown" > "$HERE/VERSION"
@@ -26,10 +27,31 @@ rsync -av --delete \
   --exclude='.pytest_cache' \
   --exclude='.ruff_cache' \
   --exclude='test_*.py' \
+  --exclude='conftest.py' \
   --exclude='fixtures' \
   --exclude='calibration.json' \
   --exclude='myconfig_capture.py' \
+  --exclude='cone_perception' \
+  --exclude='cone_nav' \
   "$HERE/" "$HOST:cone_capture_tool/"
+
+# fusion_view.py imports the pure algorithm modules out of the ROS packages, so
+# they have to land beside it. Copied rather than vendored: one source of truth,
+# and `import cone_perception.clustering` then resolves the same way on the car
+# as it does under pytest at a desk (see conftest.py).
+#
+# These two run AFTER the --delete above, which is why that rsync excludes them
+# --- otherwise every deploy would wipe them and immediately put them back, and
+# any interruption in between would leave a tool that cannot start.
+#
+# No --delete of their own: a stale .pyc is harmless, and a partial transfer
+# that had already removed the tree would be worse than one that had not.
+for pkg in cone_perception cone_nav; do
+  rsync -av \
+    --exclude='__pycache__' \
+    --exclude='test' \
+    "$REPO/ros2/src/$pkg/$pkg/" "$HOST:cone_capture_tool/$pkg/"
+done
 
 scp "$HERE/myconfig_capture.py" "$HOST:mycar/"
 
@@ -54,6 +76,10 @@ echo "For the depth demo instead of pane 2 — depth_view.py and capture_cones.p
 echo "both open the OAK-D, so they are mutually exclusive:"
 echo "      python depth_view.py"
 echo
+echo "For live fusion + corridor extraction — also instead of pane 2, and it"
+echo "needs the lidar too, so instead of pane 3 as well:"
+echo "      python fusion_view.py --weights ~/models/best.pt"
+echo
 # $HOST is an ssh alias, and only ssh can resolve one. Printing ws://$HOST here
 # hands over a URL that Foxglove answers with a bare "Connection failed", so ask
 # ssh what the alias actually points at.
@@ -62,6 +88,7 @@ CAR_HOST="${CAR_HOST:-$HOST}"
 echo "Then connect the Foxglove desktop app to:"
 echo "      ws://$CAR_HOST:8765   (lidar)"
 echo "      ws://$CAR_HOST:8766   (depth)"
+echo "      ws://$CAR_HOST:8767   (fusion)"
 echo
 echo "The desktop app, not app.foxglove.dev — a browser blocks plain ws:// from"
 echo "an HTTPS page as mixed content, which fails the same opaque way."

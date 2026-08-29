@@ -28,9 +28,26 @@ positive, the same sense as y-left in REP-103 and in data/layouts/track_v1.md.
 """
 
 import json
-import math
 import os
 from datetime import datetime, timezone
+
+# The clusterer and the angle helpers moved to cone_perception, because the nav
+# stack needs the same "what counts as one object" and a second copy would
+# drift. Re-exported here so this module's callers -- and its tests -- keep the
+# names they had.
+from cone_perception.clustering import (  # noqa: F401  (re-exported)
+    GAP_DEG,
+    GAP_MM,
+    MIN_CLUSTER_POINTS,
+    Cluster,
+    _make_cluster,
+    _median,
+    circular_mean,
+    circular_spread,
+    cluster_scan,
+    wrap180,
+    wrap360,
+)
 
 FORMAT_VERSION = 1
 
@@ -40,13 +57,6 @@ FORMAT_VERSION = 1
 # next session recording an unverified sign.
 DEFAULT_FILENAME = "calibration.json"
 
-# A cone at 1 m fills perhaps 6 deg of bearing; consecutive returns on it land
-# under 1 deg apart. 3 deg tolerates a dropped packet mid-cone without welding
-# the cone to whatever is behind it.
-GAP_DEG = 3.0
-GAP_MM = 150.0
-MIN_CLUSTER_POINTS = 3
-
 # Anything this close is the car, not the world. See the chassis note in
 # docs/hardware-baseline.md: ~250 mm returns around 184 deg are the vehicle.
 CHASSIS_MAX_MM = 400.0
@@ -55,112 +65,6 @@ CHASSIS_MAX_MM = 400.0
 # residual difference between the two hypotheses shrinks with the separation,
 # and noise decides the answer. 45 deg left and 45 deg right gives 90.
 MIN_SEPARATION_DEG = 20.0
-
-
-def wrap180(deg):
-    """Fold into (-180, 180]."""
-    return (deg + 180.0) % 360.0 - 180.0
-
-
-def wrap360(deg):
-    """Fold into [0, 360). Not just `%`: a tiny negative float rounds up to
-    exactly 360.0 under Python's modulo, which then reads as out of range."""
-    value = deg % 360.0
-    return 0.0 if value >= 360.0 else value
-
-
-def circular_mean(degs):
-    """Mean bearing, immune to the 359/1 wrap that breaks the arithmetic one."""
-    x = sum(math.cos(math.radians(d)) for d in degs)
-    y = sum(math.sin(math.radians(d)) for d in degs)
-    if abs(x) < 1e-12 and abs(y) < 1e-12:
-        # Antipodal inputs cancel: there is no meaningful mean, and returning 0
-        # would look like a real answer.
-        return None
-    return wrap360(math.degrees(math.atan2(y, x)))
-
-
-def circular_spread(degs, centre=None):
-    """Largest deviation from the mean, in degrees. The stability number."""
-    if not degs:
-        return 0.0
-    centre = circular_mean(degs) if centre is None else centre
-    if centre is None:
-        return 180.0
-    return max(abs(wrap180(d - centre)) for d in degs)
-
-
-def _median(values):
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2:
-        return float(ordered[mid])
-    return (ordered[mid - 1] + ordered[mid]) / 2.0
-
-
-class Cluster(object):
-    """A run of returns that are adjacent in bearing and agree in range."""
-
-    __slots__ = ("bearing_deg", "range_mm", "points", "width_deg", "near_mm", "far_mm")
-
-    def __init__(self, bearing_deg, range_mm, points, width_deg, near_mm, far_mm):
-        self.bearing_deg = bearing_deg
-        self.range_mm = range_mm
-        self.points = points
-        self.width_deg = width_deg
-        self.near_mm = near_mm
-        self.far_mm = far_mm
-
-    def __repr__(self):
-        return (f"Cluster({self.bearing_deg:.1f} deg, {self.range_mm:.0f} mm, "
-                f"{self.points} pts, {self.width_deg:.1f} deg wide)")
-
-
-def _make_cluster(group):
-    angles = [a for a, _ in group]
-    ranges = [r for _, r in group]
-    return Cluster(
-        bearing_deg=circular_mean(angles),
-        # Median, not mean: one return that skimmed the cone's edge and landed
-        # on the ground behind it should not drag the range.
-        range_mm=_median(ranges),
-        points=len(group),
-        width_deg=wrap360(angles[-1] - angles[0]),
-        near_mm=min(ranges),
-        far_mm=max(ranges),
-    )
-
-
-def cluster_scan(angles_deg, ranges_mm, gap_deg=GAP_DEG, gap_mm=GAP_MM,
-                 min_points=MIN_CLUSTER_POINTS, min_mm=1):
-    """Split one revolution into objects, in sensor bearings.
-
-    Everything is clustered, including the chassis returns — filtering by range
-    first would cut a cluster in half whenever an object straddles the window
-    edge, and the chassis arc is worth seeing rather than hiding.
-    """
-    pts = sorted((wrap360(a), float(r)) for a, r in zip(angles_deg, ranges_mm)
-                 if r >= min_mm)
-    if not pts:
-        return []
-
-    groups = [[pts[0]]]
-    for angle, dist in pts[1:]:
-        prev_a, prev_r = groups[-1][-1]
-        if angle - prev_a <= gap_deg and abs(dist - prev_r) <= gap_mm:
-            groups[-1].append((angle, dist))
-        else:
-            groups.append([(angle, dist)])
-
-    # An object sitting on the sensor's zero arrives as two groups, one at each
-    # end of the sorted list. Join them before anything counts points.
-    if len(groups) > 1:
-        first_a, first_r = groups[0][0]
-        last_a, last_r = groups[-1][-1]
-        if first_a + 360.0 - last_a <= gap_deg and abs(first_r - last_r) <= gap_mm:
-            groups[0] = groups.pop() + groups[0]
-
-    return [_make_cluster(g) for g in groups if len(g) >= min_points]
 
 
 def find_candidates(clusters, min_mm, max_mm, min_points=MIN_CLUSTER_POINTS):

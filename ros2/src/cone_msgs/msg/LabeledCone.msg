@@ -16,6 +16,18 @@ uint8 CLASS_ORANGE=2     # dead end — the wall across a stub
 uint8 CLASS_RED=3        # junction gate — always placed in pairs
 uint8 CLASS_YELLOW=4     # right corridor boundary
 
+# A lidar cluster the camera did not label: either no detection matched it, or
+# it sits outside the camera's ~69 deg while the lidar sweeps ~218 deg, which is
+# the usual case rather than a fault. Published so a cone the detector missed is
+# visible in the cone list instead of silently absent.
+#
+# Deliberately NOT named CLASS_UNKNOWN. model/cone_classes.py parses every
+# `uint8 CLASS_* = <id>` line here and requires the ids to form a gapless
+# 0..N-1 run that matches the Roboflow class list, so any CLASS_-prefixed
+# constant -- at 5 or at 255 -- would break roboflow_export.py's gate over a
+# message change the dataset knows nothing about.
+uint8 UNLABELED=255
+
 # Red and orange are the pair to watch: they are the two most similar colors on
 # the track and they mean opposite things. A dead end read as a gate hands off
 # to junction_exec at a wall; a gate read as a dead end misses the junction.
