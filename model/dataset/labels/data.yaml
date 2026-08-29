@@ -1,8 +1,8 @@
 # Written by roboflow_export.py — the committed record of the
 # dataset this model was trained on. Images are gitignored, so the
 # paths point at a local export; re-download it with
-#   python roboflow_export.py --workspace ... --project ... --version N
-path: ../export/cone-detector-nfjog-v1
+#   python roboflow_export.py --version N
+path: ../export/cone-detector-nfjog-v2
 train: train/images
 val: valid/images
 test: test/images

@@ -6,64 +6,69 @@
     "red",
     "yellow"
   ],
-  "class_order_source": "/Users/home/Projects/MAE 148/cone-corridor-nav/ros2/src/cone_msgs/msg/LabeledCone.msg",
-  "exported_utc": "2026-08-28T16:39:26+00:00",
-  "location": "/Users/home/Projects/MAE 148/cone-corridor-nav/model/dataset/export/cone-detector-nfjog-v1",
+  "class_order_source": "C:\\Dev\\GitHub\\cone-corridor-nav\\ros2\\src\\cone_msgs\\msg\\LabeledCone.msg",
+  "exported_utc": "2026-08-29T21:43:12+00:00",
+  "location": "C:\\Dev\\GitHub\\cone-corridor-nav\\model\\dataset\\export\\cone-detector-nfjog-v2",
   "roboflow": {
     "format": "yolov8",
     "labels_normalized": {
-      "converted_files": 283,
-      "converted_rows": 1415,
-      "files": 360
+      "converted_files": 902,
+      "converted_rows": 5661,
+      "files": 1777
     },
     "project": "cone-detector-nfjog",
-    "version": "1",
+    "version": "2",
     "workspace": "r-william-thatcher-s-workspace"
   },
   "splits": [
     {
-      "images": 320,
+      "images": 1614,
       "instances": {
-        "blue": 357,
-        "magenta": 0,
-        "orange": 216,
-        "red": 309,
-        "yellow": 310
+        "blue": 1176,
+        "magenta": 350,
+        "orange": 2250,
+        "red": 3664,
+        "yellow": 890
       },
-      "labels": 320,
+      "labels": 1614,
       "sessions": {
-        "20260827_1053_lot-sun-A": 21,
-        "20260827_1503_eli1": 299
+        "20260827_1053_lot-sun-A": 14,
+        "20260827_1503_eli1": 800,
+        "20260828_1320_eli2": 160,
+        "20260828_1324_eli3": 160,
+        "20260828_1328_eli4": 160,
+        "20260828_1348_eli5": 160,
+        "20260828_1354_eli6": 160
       },
       "split": "train"
     },
     {
-      "images": 20,
+      "images": 100,
       "instances": {
-        "blue": 59,
+        "blue": 385,
         "magenta": 7,
-        "orange": 17,
-        "red": 28,
-        "yellow": 44
+        "orange": 98,
+        "red": 263,
+        "yellow": 327
       },
-      "labels": 20,
+      "labels": 100,
       "sessions": {
-        "20260827_1429_ebu2_test_2": 20
+        "20260827_1429_ebu2_test_2": 100
       },
       "split": "valid"
     },
     {
-      "images": 20,
+      "images": 63,
       "instances": {
-        "blue": 95,
+        "blue": 302,
         "magenta": 13,
-        "orange": 16,
-        "red": 37,
-        "yellow": 62
+        "orange": 67,
+        "red": 178,
+        "yellow": 232
       },
-      "labels": 20,
+      "labels": 63,
       "sessions": {
-        "20260827_1413_ebu2_test": 20
+        "20260827_1413_ebu2_test": 63
       },
       "split": "test"
     }
