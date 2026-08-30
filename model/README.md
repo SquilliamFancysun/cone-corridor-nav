@@ -6,7 +6,8 @@ Everything about the cone detector that happens **off-car**. The on-car runtime
 ## Layout
 
 ```
-capture/     On-car capture tool: gamepad-triggered OAK-D recorder (see its README)
+capture/     On-car tools: gamepad-triggered OAK-D recorder, the lidar, depth and
+             detector live views (see its README)
 cone_classes.py  Class order, parsed from LabeledCone.msg, and the checks against it
 runtime.py       Device selection and run provenance, shared by the scripts below
 dataset/
@@ -120,6 +121,7 @@ flowchart TD
 | 8 | `training/train.py --data .../data.yaml` | `training/<name>/` weights + curves | Curves are D2. Colour-unsafe augmentation is not reachable from the CLI |
 | 9 | `dataset/roboflow_prelabel.py --weights .../best.pt` | `<session>-auto` batches, tagged | v1 proposes boxes on the frames nobody labeled; correcting is far faster than drawing |
 | 10 | `training/evaluate.py --split test`, then `export/` | per-class numbers, OAK-D `.blob` | Report red-vs-orange separately; weights attach to a Release, not to git |
+| 11 | `capture/detect_view.py --weights best.pt` | a live view of the boxes | The deployment check: right colour box on right cone, on this camera, in this light |
 
 ### Two rules that explain the rest of it
 

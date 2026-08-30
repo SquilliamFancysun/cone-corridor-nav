@@ -73,6 +73,18 @@ told apart at range.
 
 Both write a markdown report into the run directory.
 
+Neither of them looks through the camera, though, and a model with good numbers
+can still fail on the car — different white balance, a soft lens, or simply the
+wrong `best.pt` copied across. `../capture/detect_view.py` is that check: the
+boxes drawn live on the OAK-D, each in the colour of the class it claims. It
+also runs at a desk against recorded frames, which is the quickest look at a
+run that has just finished:
+
+```bash
+python ../capture/detect_view.py --weights v3/weights/best.pt \
+    --frames ../dataset/export/<project>-v<N>/test/images --window
+```
+
 ## What the scripts refuse to do
 
 - **Hue or saturation jitter.** Ultralytics defaults to `hsv_h=0.015,

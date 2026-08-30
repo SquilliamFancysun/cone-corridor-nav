@@ -76,6 +76,9 @@ echo "For the depth demo instead of pane 2 — depth_view.py and capture_cones.p
 echo "both open the OAK-D, so they are mutually exclusive:"
 echo "      python depth_view.py"
 echo
+echo "To check the detector on the live camera — also instead of pane 2:"
+echo "      python detect_view.py --weights ~/models/best.pt"
+echo
 echo "For live fusion + corridor extraction — also instead of pane 2, and it"
 echo "needs the lidar too, so instead of pane 3 as well:"
 echo "      python fusion_view.py --weights ~/models/best.pt"
@@ -89,6 +92,7 @@ echo "Then connect the Foxglove desktop app to:"
 echo "      ws://$CAR_HOST:8765   (lidar)"
 echo "      ws://$CAR_HOST:8766   (depth)"
 echo "      ws://$CAR_HOST:8767   (fusion)"
+echo "      ws://$CAR_HOST:8768   (detections)"
 echo
 echo "The desktop app, not app.foxglove.dev — a browser blocks plain ws:// from"
 echo "an HTTPS page as mixed content, which fails the same opaque way."

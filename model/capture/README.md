@@ -1,7 +1,6 @@
 # Cone capture
 
-Two on-car tools, both gamepad-triggered, both running on the Pi with no ROS
-involved:
+On-car tools, all running on the Pi with no ROS involved:
 
 - **`capture_cones.py`** — image capture from the OAK-D Lite, for building the
   D1 dataset.
@@ -9,16 +8,18 @@ involved:
   developing the centerfinding algorithm against real track data.
 - **`depth_view.py`** — live Foxglove view of the OAK-D Lite's stereo depth, as
   a 16-bit depth image, a colorized heat map and a point cloud.
+- **`detect_view.py`** — the detector's boxes drawn on the live camera, for
+  checking a freshly trained model actually works before anything depends on it.
 - **`fusion_view.py`** — the nav stack's perception layer, live: LD06 clusters
   labelled with the classes the camera sees, and the corridor centerline drawn
   through them.
 
-The lidar tool owns the LD06; the two camera tools both want the OAK-D, so those
-two are mutually exclusive. Lidar plus either camera tool runs side by side.
-`fusion_view.py` wants **both** sensors, so it runs instead of the other three,
-not alongside them.
+The lidar tool owns the LD06; the three camera tools all want the OAK-D, so only
+one of those runs at a time. Lidar plus any one camera tool runs side by side.
+`fusion_view.py` wants **both** sensors, so it runs instead of the others, not
+alongside them.
 
-This file is the reference for the two tools. For the procedure — build the
+This file is the reference for these tools. For the procedure — build the
 track, preflight, run all three panes, pull the data — see
 [`docs/data-collection.md`](../../docs/data-collection.md).
 
@@ -562,6 +563,97 @@ Drag that file into Foxglove on the laptop to scrub the run — which is the
 easiest way to get a depth figure into the report without the car present.
 Existing files are never overwritten.
 
+## Camera: the detector's view
+
+`detect_view.py` draws the detector's boxes on the live camera. It is the
+eyeball check on a freshly trained model, and it is the one to run before
+anything downstream is allowed to depend on those weights.
+
+```
+python detect_view.py --weights ~/models/best.pt
+```
+
+Foxglove on `ws://<car-ip>:8768`, Image panel on `/detections`. Port 8768, so
+the lidar (8765), depth (8766) and fusion (8767) views keep theirs.
+
+### What it is for, and what it is not
+
+`evaluate.py` answers "is this model good" with numbers on a labelled split, and
+that is the answer the report quotes. This answers a narrower question the
+numbers cannot: does the model, *on this camera, in this light, right now*, put
+the right coloured box on the right cone. A model with a fine mAP still fails
+here if the camera is white-balanced differently than it was during capture, or
+if the lens is soft, or if the weights on the car are not the weights you think.
+
+So it is a check on the deployment, not on the training.
+
+### Reading it
+
+Each box is drawn in **the colour of the class it claims to be**, so a mislabel
+needs no legend — a blue box on an orange cone is wrong at a glance. Walk cones
+past the lens at a few ranges and watch for:
+
+| What you see | What it means |
+|---|---|
+| A box in the wrong colour | The confusion `evaluate.py` reports, happening live. Red and orange are the pair that matters |
+| No box on an obvious cone | A gap in the corridor downstream, not a wrong label |
+| `*` after the label | The box touches a frame edge, so its bearing and its `range_from_bbox` both lie. Expected at the edges; a problem if the cone is central |
+| A thin outline | Within 0.1 of `--conf`. Marginal, and still drawn — an unsure cone is the interesting case |
+| `inference_ms` climbing | Boxes are stale before fusion uses them. Drop `--imgsz` to 320 |
+
+`/detect_status` carries the same numbers plus a cumulative per-class count. A
+class that stays at zero across a session that contained it is the finding —
+the same reading as the qualitative sweep at the end of
+[`../dataset/LABELING.md`](../dataset/LABELING.md).
+
+It refuses to start if the weights' class order disagrees with
+`cone_perception/cone_classes.py`, because every box would then carry another
+class's colour and the tool would be inventing the very error it exists to
+find.
+
+### Without a screen, and without a car
+
+Over SSH there is no display, which is what Foxglove is for. When neither is
+available — no `foxglove-sdk` installed, nothing to connect with — `--save-dir`
+writes the annotated frames out to be `scp`'d back, the same habit as
+`capture_cones.py --preview`:
+
+```
+python detect_view.py --weights ~/models/best.pt \
+    --no-live --save-dir ~/detect_check --save-every 5 --duration 20
+```
+
+And `--frames` replaces the camera with a directory of recorded jpgs, so a
+session already pulled off the car runs through the real model at a desk with no
+hardware at all. Unlike `fusion_view.py --detector replay`, which replays
+recorded *labels*, this runs the model — which is the point:
+
+```
+python detect_view.py --weights ../training/v3/weights/best.pt \
+    --frames ../dataset/images/<session>/frames --window
+```
+
+`--window` opens a cv2 window, which needs a display and so is for the laptop,
+not the car. `opencv-python-headless` cannot do it either; the full
+`opencv-python` can.
+
+### Useful flags
+
+| Flag | Default | |
+|---|---|---|
+| `--weights` | `best.pt` | Beside the tool on the car |
+| `--imgsz` | 416 | Matches the preview the model trained on. 320 if inference is too slow |
+| `--conf` | 0.25 | Deliberately low: a spurious box costs one mislabelled cluster, a missing box costs a cone |
+| `--frames DIR` | — | Recorded jpgs instead of the camera. No hardware |
+| `--loop` | — | With `--frames`, start over at the end |
+| `--scale` | 2 | Upscale for viewing only; 416×234 is too small to read a label on |
+| `--window` | — | cv2 window. Needs a display |
+| `--save-dir DIR` | — | Write every annotated frame as a jpg |
+| `--save-every` | 1 | Keep every Nth frame with `--save-dir` |
+| `--mcap PATH` | — | Record `/detections` and `/detect_status` for replay off-car |
+| `--settle` | 2 | Seconds of auto exposure/WB before locking, as `capture_cones.py` does |
+| `--duration N` | — | Stop after N seconds |
+
 ## Tests
 
 `session.py`, `ld06.py` and `calibrate.py` are pure Python — naming, the
@@ -587,6 +679,14 @@ it must refuse to answer: one pose, two poses too close together, and a cone
 dead ahead — a point on the x axis is its own reflection, so an on-axis pair
 fits both signs equally and the fit has to say so.
 
+`test_detect_view.py` covers the box drawing, which is the only part of
+`detect_view.py` that can be wrong quietly: normalised centre-form in, pixel
+corners out, and an off-by-half there puts every box beside its cone rather than
+on it — which reads as a model that nearly works. It also pins the class-to-
+colour map, since a permutation there would have the tool reporting a mislabel
+that is not there and hiding one that is.
+
 `joystick.py`, `capture_cones.py`, `depth_view.py` and the serial half of
 `lidar_view.py` need the hardware; verify those with `--probe-buttons`,
-`--preview` and `--selftest` on the car.
+`--preview` and `--selftest` on the car. `detect_view.py` is the exception among
+the camera tools — `--frames` runs it end to end at a desk.

@@ -49,10 +49,11 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import detectors
+import oakd
 from calibrate import load as load_calibration
 from cone_nav.corridor import boundary_split
 from cone_nav.corridor.centerline import CORRIDOR, centerline
-from cone_perception import clustering, extrinsics, fusion, geometry
+from cone_perception import clustering, extrinsics, fusion
 from cone_perception.cone_classes import (
     CLASS_BLUE,
     CLASS_MAGENTA,
@@ -293,90 +294,6 @@ class LidarReader(threading.Thread):
         self._stop.set()
 
 
-def build_camera_pipeline(fps, preview=(416, 234)):
-    """ColorCamera -> preview, mirroring capture_cones.py's geometry exactly.
-
-    Same 416x234 16:9 preview with the aspect ratio kept. That is not a
-    coincidence to be tidied up later: the detector must see at inference the
-    same framing and the same colours it trained on, and capture_cones.py is
-    what produced the training frames.
-    """
-    import depthai as dai
-
-    pipeline = dai.Pipeline()
-    cam = pipeline.create(dai.node.ColorCamera)
-    cam.setBoardSocket(dai.CameraBoardSocket.RGB)
-    cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-    cam.setFps(fps)
-    cam.setInterleaved(False)
-    cam.setPreviewSize(*preview)
-    cam.setPreviewKeepAspectRatio(True)
-    cam.setBoardSocket(dai.CameraBoardSocket.RGB)
-
-    xout = pipeline.create(dai.node.XLinkOut)
-    xout.setStreamName("preview")
-    # Latest frame wins. A frame queued behind three stale ones is a label
-    # attached to where the car was, not where it is.
-    xout.input.setBlocking(False)
-    xout.input.setQueueSize(1)
-    cam.preview.link(xout.input)
-
-    xin = pipeline.create(dai.node.XLinkIn)
-    xin.setStreamName("control")
-    xin.out.link(cam.inputControl)
-    return pipeline, preview
-
-
-def lock_camera(q_ctrl, settle_s=2.0):
-    """Settle auto exposure/WB/focus, then pin them for the run.
-
-    Same rationale as capture_cones.py: a camera left on auto drifts between
-    frames, and blue-versus-yellow is exactly the discrimination that drift
-    costs.
-    """
-    import depthai as dai
-
-    time.sleep(settle_s)
-    ctrl = dai.CameraControl()
-    ctrl.setAutoExposureLock(True)
-    ctrl.setAutoWhiteBalanceLock(True)
-    q_ctrl.send(ctrl)
-
-
-def open_camera(fps, preview):
-    import depthai as dai
-
-    pipeline, size = build_camera_pipeline(fps, preview)
-    try:
-        device = dai.Device(pipeline)
-    except RuntimeError as exc:
-        message = str(exc)
-        hint = ("       Check the USB-C cable and see docs/hardware-baseline.md.")
-        if "ALREADY_IN_USE" in message or "already" in message.lower():
-            hint = ("       Something else holds the camera. Only one process can:\n"
-                    "       stop capture_cones.py and depth_view.py, and make sure\n"
-                    "       DonkeyCar is on myconfig_capture.py (CAMERA_TYPE=\"MOCK\").")
-        raise SystemExit(f"error: cannot open the OAK-D\n       {message}\n{hint}")
-    return device, size
-
-
-def camera_intrinsics(device, width, height):
-    """fx, fy, cx, cy for the preview, read from the device.
-
-    There is no intrinsics file in this repo and there does not need to be --
-    the OAK-D carries its own factory calibration. The preview is a 16:9 crop of
-    a 4:3 sensor, so the vertical crop matters for fy (and therefore range_bbox)
-    while the horizontal FOV that bearing depends on is untouched.
-    """
-    import depthai as dai
-
-    matrix = device.readCalibration().getCameraIntrinsics(
-        dai.CameraBoardSocket.RGB, width, height)
-    return geometry.Intrinsics(fx=matrix[0][0], fy=matrix[1][1],
-                               cx=matrix[0][2], cy=matrix[1][2],
-                               width=width, height=height)
-
-
 def pipeline_once(scan, detection_set, calibration, intr, args, now):
     """One revolution -> labelled cones and a centerline. The whole algorithm.
 
@@ -502,8 +419,8 @@ def main(argv=None):
     detector = detectors.build(args.detector, weights=args.weights,
                                imgsz=args.imgsz, conf=args.conf,
                                device=args.device)
-    device, (width, height) = open_camera(args.camera_fps, (416, 234))
-    intr = camera_intrinsics(device, width, height)
+    device, (width, height) = oakd.open_camera(args.camera_fps)
+    intr = oakd.camera_intrinsics(device, width, height)
     announce(record, intr, detector, args)
 
     handle = open_serial(args.port, BAUD)
@@ -516,7 +433,7 @@ def main(argv=None):
 
     q_preview = device.getOutputQueue("preview", maxSize=1, blocking=False)
     q_ctrl = device.getInputQueue("control")
-    lock_camera(q_ctrl)
+    oakd.lock_camera(q_ctrl)
 
     server = None
     if sinks.available and not args.no_live:
