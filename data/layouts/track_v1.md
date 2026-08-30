@@ -56,7 +56,7 @@ rather than snakes and the footprint drops to roughly 7 × 6 m.
 | Branch divergence | ±25° from incoming centerline | Keeps both branches inside the ~69° HFOV |
 | Island nose | 1.78 m past each junction | `half_width / sin(divergence)` — see below |
 | Segment length | A 3 m, B 3.5 m, C 3 m | |
-| Cone spacing | 1.5 m on straights, 0.75 m through fork mouths and dead-end walls | Boundary ambiguity bites at the forks; straights tolerate sparse cones |
+| Cone spacing | **0.75 m throughout** | Was 1.5 m on straights. Measured wrong — see [Cone spacing is not a comfort setting](#cone-spacing-is-not-a-comfort-setting) |
 | Dead-end stub | 1.5 m deep, walled across the end | Long enough that the car commits before the wall is obvious |
 | Red gates | Pairs, straddling the corridor 1.0 m before each fork | `GateEvent.distance` is "meters to gate midpoint"; `gate_detect.py` keys on *pairs*, so red never goes down singly |
 | Orange dead ends | The middle cone of each dead-end end wall | Its own class, so a stub is recognisable before the car commits to it |
@@ -79,10 +79,18 @@ counts are always equal.** Total segment length is 3 + 3.5 + 3 + 1.5 + 1.5 =
 | **Magenta** | **1** | 1 | The goal |
 | | **43** | **33** | |
 
-Full build uses 1.5 m spacing on straights; the minimum stretches straights to
-2 m and keeps 0.75 m through the fork mouths. Cut from the straights, never the
-forks — straights are the part the corridor layer extrapolates well, and the
-forks are where boundary ambiguity actually bites.
+~~Full build uses 1.5 m spacing on straights; the minimum stretches straights to
+2 m and keeps 0.75 m through the fork mouths.~~ **Superseded.** Both figures
+predate the sensor-overlap measurement above: at 1.5 m the car cannot follow the
+corridor at all, and 2 m is further past the limit. Use 0.75 m throughout, which
+raises the blue and yellow counts to roughly 17 per colour per 12.5 m of wall.
+1.0 m also works, and 1.25 m passes by a single row; 0.75 m is the one with
+margin.
+
+There is no longer a "cut from the straights" option — the straights are the
+part that needs the density, because the overlap window is the same 1.8 m deep
+wherever the car is. Cut LENGTH instead if cones are short: a 6 m corridor at
+0.75 m spacing drives, and a 12 m corridor at 1.5 m does not.
 
 **Red does not scale down.** `gate_detect.py` keys on *pairs*, and
 `GateEvent.distance` is the range to a gate's midpoint, so a lone red cone is
@@ -114,6 +122,53 @@ inferred from a gap that failed to open.
 
 Do **not** use red for a dead-end wall — it would fire a false gate, and red is
 the colour orange is most likely to be confused with in the first place.
+
+## Cone spacing is not a comfort setting
+
+**Corrected 2026-08-30, from `sim/drive_sim.py`.** This document originally
+specified 1.5 m spacing on the straights, reasoning that "straights tolerate
+sparse cones". They do not, and the reason has nothing to do with the straights.
+
+The two sensors overlap over a much narrower band than either one's range
+suggests:
+
+- The camera cannot see a boundary cone until it is **1.18 m** ahead. A cone
+  0.75 m off the corridor axis sits at 32.5 deg or wider before that, outside
+  the usable frame (`0.75 / tan(32.5°)`).
+- The lidar stops resolving a cone past about **3.0 m**, where it returns fewer
+  than two points and one point is indistinguishable from noise
+  (`cone_perception/clustering.py`).
+
+So a cone is only *both* locatable and identifiable between 1.18 m and 3.0 m
+ahead — a window under 2 m deep. Spacing decides how many cone rows fall inside
+it, and the corridor layer needs at least two to form a chain it can steer
+along:
+
+| Spacing | Centerline points | Car drives? |
+|---|---|---|
+| 1.50 m | 4.6 | **no** |
+| 1.25 m | 5.0 | yes, by one row |
+| 1.00 m | 6.8 | yes |
+| 0.75 m | 10.2 | yes |
+| 0.50 m | 14.2 | yes |
+
+Re-measured 2026-08-30, after the cone's lidar cross-section was measured rather
+than estimated — 7.4 cm, not 6.5 cm (`sim/cone_field.py`). That bought roughly
+half a metre of lidar range and moved the cutoff one row, from between 1.0 and
+1.25 m to between 1.25 and 1.5 m. **The recommendation does not change: 0.75 m.**
+A spacing that passes by a single cone row is not one to build a track on.
+
+At 1.5 m the car does not move, and nothing about that failure points at
+spacing: the detector is working, fusion is working, and the centerline simply
+comes back too short to steer along.
+
+`cone_nav/corridor/side_assign.py` recovers the near blind spot by giving
+unlabelled clusters a side from geometry, and roughly quadruples the usable
+midpoints at every spacing — but it cannot see further than the lidar either, so
+it does not rescue a sparse track. **Lay the corridor at 1.0 m or tighter.**
+
+This raises the cone budget for a full track build. The 0.75 m figure below for
+fork mouths was already right; it is now the number everywhere.
 
 ## Cone colors at a fork
 

@@ -33,7 +33,19 @@ BRANCH_DIVERGENCE_DEG = 25.0
 # that is what the camera measures. See the range arithmetic in
 # cone_perception/clustering.py for why this number bounds how far the lidar
 # can see a cone at all.
-CONE_WIDTH_M = 0.065
+#
+# 0.065 was an estimate. This is the measured value for THIS car's cones at THIS
+# scan-plane height: calibration.json recorded 5.2 and 5.8 points per scan on a
+# cone at 965 mm, and at the LD06's 0.8 deg step those back out to 7.0 cm and
+# 7.8 cm of effective width. The mean is kept rather than the better of the two,
+# and it is two observations at one range -- so it is a better number than the
+# estimate, not a precise one.
+#
+# It makes the sim slightly LESS pessimistic about range (>=2 returns out to
+# ~2.8 m rather than ~2.3 m). The cone-spacing conclusion in
+# cone_nav/corridor/side_assign.py survives it; check that table again if this
+# number ever moves much further.
+CONE_WIDTH_M = 0.074
 
 
 class Cone(object):
@@ -358,3 +370,92 @@ def _detection(cls, confidence, u, v, h_px, intr):
                or v - h / 2 <= 0.0 or v + h / 2 >= 1.0)
     return Detection(cls=cls, confidence=confidence, u=u, v=v, w=w, h=h,
                      clipped=clipped)
+
+
+def arc_pose(start, heading_deg, radius, sweep_deg, left=True):
+    """Where a constant-radius arc ends, as (point, heading_deg).
+
+    Exposed so arcs can be chained into an S without the caller re-deriving the
+    rotation. Composing them by eye -- translating the next arc to the previous
+    one's last cone -- produces a layout whose two halves do not join, which
+    looks almost right in a plot and is not a corridor at all.
+    """
+    sign = 1.0 if left else -1.0
+    centre = _offset(start, heading_deg, sign * radius)
+    rot = math.radians(sign * sweep_deg)
+    dx, dy = start[0] - centre[0], start[1] - centre[1]
+    point = (centre[0] + dx * math.cos(rot) - dy * math.sin(rot),
+             centre[1] + dx * math.sin(rot) + dy * math.cos(rot))
+    return point, heading_deg + sign * sweep_deg
+
+
+def curved_corridor(radius=6.0, sweep_deg=60.0, segment="curve",
+                    spacing=STRAIGHT_SPACING_M,
+                    half_width=CORRIDOR_WIDTH_M / 2.0, left=True,
+                    lead_in_m=2.0, start=(0.0, 0.0), start_heading_deg=0.0,
+                    skip_first=False):
+    """A corridor that bends, for exercising the control layer.
+
+    `straight_corridor` cannot fail a steering-sign error -- a car that steers
+    backwards tracks a straight line just as well as one that steers correctly,
+    right up until the corridor turns. This is the smallest field that tells the
+    two apart, which is why it exists in the layout generator rather than in a
+    test fixture.
+
+    A straight `lead_in_m` comes first so the car starts on a settled line
+    rather than mid-corner, matching how a real run begins.
+
+    Not part of track_v1 and not surveyed. The real track's junctions are built
+    from `branch()`; this is a sim-only shape.
+    """
+    cones = []
+    if lead_in_m > 0:
+        cones.extend(corridor_segment(start, start_heading_deg, lead_in_m,
+                                      segment, spacing=spacing,
+                                      half_width=half_width,
+                                      skip_first=skip_first))
+        skip_first = False
+    arc_start = _along(start, start_heading_deg, lead_in_m)
+
+    sign = 1.0 if left else -1.0
+    centre = _offset(arc_start, start_heading_deg, sign * radius)
+    # Arc length between cone rows, converted to the angle it subtends.
+    step_deg = math.degrees(spacing / radius)
+    count = max(2, int(round(sweep_deg / step_deg)) + 1)
+
+    for i in range(0 if (lead_in_m <= 0 and not skip_first) else 1, count):
+        theta = math.radians(sweep_deg * i / (count - 1))
+        rot = sign * theta
+        dx, dy = arc_start[0] - centre[0], arc_start[1] - centre[1]
+        point = (centre[0] + dx * math.cos(rot) - dy * math.sin(rot),
+                 centre[1] + dx * math.sin(rot) + dy * math.cos(rot))
+        heading = start_heading_deg + math.degrees(rot)
+        cones.append(Cone(BLUE, *_offset(point, heading, half_width), segment))
+        cones.append(Cone(YELLOW, *_offset(point, heading, -half_width), segment))
+    return cones
+
+
+def s_bend_corridor(radius=4.0, sweep_deg=45.0, spacing=STRAIGHT_SPACING_M,
+                    half_width=CORRIDOR_WIDTH_M / 2.0, lead_in_m=2.0):
+    """Left then right, joined at a shared tangent.
+
+    The shape that catches a controller which only works in one direction, and
+    the one that most resembles the net path of track_v1 -- whose two junctions
+    take the heading 0 -> +25 -> 0 for the same reason.
+    """
+    first = curved_corridor(radius=radius, sweep_deg=sweep_deg,
+                            segment="s-bend-a", spacing=spacing,
+                            half_width=half_width, left=True,
+                            lead_in_m=lead_in_m)
+    # The arc begins AFTER the lead-in, not at the origin. Computing the joint
+    # from (0, 0) silently offsets the whole second half by lead_in_m.
+    joint, heading = arc_pose(_along((0.0, 0.0), 0.0, lead_in_m), 0.0,
+                              radius, sweep_deg, left=True)
+    # The first arc already placed a row at the joint, so the second starts one
+    # step along rather than doubling it up.
+    second = curved_corridor(radius=radius, sweep_deg=sweep_deg,
+                             segment="s-bend-b", spacing=spacing,
+                             half_width=half_width, left=False,
+                             lead_in_m=0.0, start=joint,
+                             start_heading_deg=heading, skip_first=True)
+    return first + second
