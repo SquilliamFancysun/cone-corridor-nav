@@ -8,6 +8,9 @@ On-car tools, all running on the Pi with no ROS involved:
   developing the centerfinding algorithm against real track data.
 - **`depth_view.py`** — live Foxglove view of the OAK-D Lite's stereo depth, as
   a 16-bit depth image, a colorized heat map and a point cloud.
+- **`drive_corridor.py`** — the car driving itself down the corridor. The
+  perception half is `fusion_view.py`'s, imported not copied; what it adds is
+  pure pursuit, a speed law, a deadman and the VESC.
 - **`detect_view.py`** — the detector's boxes drawn on the live camera, for
   checking a freshly trained model actually works before anything depends on it.
 - **`fusion_view.py`** — the nav stack's perception layer, live: LD06 clusters
@@ -777,3 +780,104 @@ that is not there and hiding one that is.
 `lidar_view.py` need the hardware; verify those with `--probe-buttons`,
 `--preview` and `--selftest` on the car. `detect_view.py` is the exception among
 the camera tools — `--frames` runs it end to end at a desk.
+
+## Driving: `drive_corridor.py`
+
+The tool that closes the loop. Perception is `fusion_view.py`'s, imported rather
+than copied, so what you watched in Foxglove and what the car then did cannot
+diverge. What this adds is `cone_nav/control/` — pure pursuit and the speed law —
+plus a deadman and the VESC.
+
+### Run these three in order
+
+Do not skip ahead. The second one is how the steering sign gets checked while
+the car is physically unable to go anywhere.
+
+```bash
+# a) hand-pushed. Nothing actuates; the VESC is never even opened.
+python drive_corridor.py --weights ~/models/best.pt --dry-run \
+       --log ~/trials/dry-$(date +%H%M).jsonl
+
+# b) ON A STAND, wheels off the ground. Walk a cone across the front of the car
+#    and watch which way the wheels turn. Backwards? Add --invert-steering.
+python drive_corridor.py --weights ~/models/best.pt --steer-only
+
+# c) for real. Hold X to arm; release and it stops.
+python drive_corridor.py --weights ~/models/best.pt \
+       --max-duty 0.05 --log ~/trials/run-$(date +%H%M).jsonl
+```
+
+**DonkeyCar must be stopped.** It holds `/dev/ttyACM0`, and only one process
+can. `fuser -v /dev/ttyACM0` names whoever has it.
+
+### Before the first run ever
+
+`drive_corridor.py` refuses to start until `REAR_AXLE_IN_BASE` and `WHEELBASE_M`
+are measured in `cone_perception/extrinsics.py`. That refusal is deliberate and
+matches `fusion_view.py`'s refusal to run on an uncalibrated lidar sign: this
+tool ACTUATES, and a guessed wheelbase produces steering that looks entirely
+reasonable in the logs while being wrong by an unknown factor at every angle.
+
+Take a tape to the car once. `base_link` is at the lidar, so the rear axle's x
+is negative.
+
+### What stops the car
+
+Every one of these commands zero duty, and `finally` does it again on the way
+out:
+
+| | |
+|---|---|
+| Deadman released | The X button is held, not toggled |
+| No new scan for 250 ms | Two revolutions. One is a hiccup, two is a fault |
+| No steerable centerline | `pure_pursuit` returned None |
+| Corridor visible under 1 m ahead | The cones ahead have dropped out |
+| Any exception | Stopped before the traceback prints, not after |
+
+The reason is in `/drive_status` and in the trial log. A stopped car looks the
+same from outside whatever stopped it, and "no line" versus "line too short" is
+the difference between a perception bug and a corridor that ran out of cones.
+
+### Tuning
+
+`--lookahead` first, then `MAX_STEER_RAD` in `pure_pursuit.py`. Weaving means
+the lookahead is too short; cutting corners means it is too long. The default of
+1.0 m was chosen in `sim/drive_sim.py` for robustness rather than for the best
+number in any one run — it is within a centimetre of optimal across 0.6 to
+2.4 m/s, so it survives the duty-to-speed ratio being wrong by a factor of four,
+which it may well be.
+
+### Cone spacing decides whether this works at all
+
+The camera cannot see a boundary cone closer than **1.18 m**; the lidar cannot
+range one past **3.0 m**. Everything usable lives in that window, and cone
+spacing sets how many rows land in it:
+
+| Spacing | Centerline points | Drives? |
+|---|---|---|
+| 1.5 m | 4.6 | no |
+| 1.25 m | 5.0 | yes, by one row |
+| 1.0 m | 6.8 | yes |
+| 0.75 m | 10.2 | yes |
+
+**Lay the corridor at 1.0 m or tighter.** This is the single most likely reason
+for a car that refuses to move while every status number looks healthy. See
+`data/layouts/track_v1.md`, whose original 1.5 m straights this measurement
+corrected.
+
+### `--no-camera`
+
+Drives on the lidar alone: every unlabelled cluster is given a side by geometry
+rather than only those the camera structurally could not see. Correct on a plain
+corridor and **wrong at a fork**, which is why it is a flag with a startup
+warning rather than a default. It is the fallback if `matched` in
+`/fusion_status` comes back near zero — a symptom of `CAMERA_YAW_DEG` being
+wrong, which is not an afternoon's work to fix properly with a car waiting.
+
+### The trial log
+
+`--log` writes one JSON object per control tick: cones seen, how many the camera
+labelled versus geometry, centerline points and reach, commanded steering, duty,
+servo, and the deadman state. Flushed as it goes, because a run that ends with
+someone lunging for the car is exactly the run worth having the data from. This
+is what `analysis/` consumes.

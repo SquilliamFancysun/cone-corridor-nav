@@ -140,6 +140,19 @@ class Sinks:
         self.status_ch = foxglove.Channel("/fusion_status", schema=STATUS_SCHEMA)
         self.available = True
 
+    def channel(self, topic, schema):
+        """An extra typed channel on this sink, for tools that add their own.
+
+        drive_corridor.py publishes /drive_status alongside these. Exposed as a
+        method so it does not have to reach into the foxglove module this class
+        holds privately -- and so that a tool built on a degraded Sinks (no
+        foxglove-sdk installed) fails the same graceful way everything else here
+        does, rather than with an AttributeError.
+        """
+        if not self.available:
+            return None
+        return self._foxglove.Channel(topic, schema=schema)
+
     def open_mcap(self, path):
         return self._foxglove.open_mcap(path)
 

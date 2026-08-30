@@ -89,6 +89,25 @@ echo "For live fusion + corridor extraction — also instead of pane 2, and it"
 echo "needs the lidar too, so instead of pane 3 as well:"
 echo "      python fusion_view.py --weights ~/models/best.pt"
 echo
+echo "To DRIVE the corridor. Stop DonkeyCar first — it holds the VESC — and run"
+echo "these three in order. Do not skip ahead; the second one is how the"
+echo "steering sign gets checked while the car cannot go anywhere."
+echo
+echo "  a) hand-pushed, nothing actuates, watch matched/ centerline in Foxglove:"
+echo "      python drive_corridor.py --weights ~/models/best.pt --dry-run \\"
+echo "             --log ~/trials/dry-\$(date +%H%M).jsonl"
+echo
+echo "  b) ON A STAND, wheels off the ground. Walk a cone across the front and"
+echo "     watch which way they turn. Add --invert-steering if it is backwards:"
+echo "      python drive_corridor.py --weights ~/models/best.pt --steer-only"
+echo
+echo "  c) for real. Hold X to arm, release to stop:"
+echo "      python drive_corridor.py --weights ~/models/best.pt \\"
+echo "             --max-duty 0.05 --log ~/trials/run-\$(date +%H%M).jsonl"
+echo
+echo "  If the detector is not cooperating, --no-camera drives on the lidar"
+echo "  alone. Correct on a plain corridor, WRONG at a fork."
+echo
 # $HOST is an ssh alias, and only ssh can resolve one. Printing ws://$HOST here
 # hands over a URL that Foxglove answers with a bare "Connection failed", so ask
 # ssh what the alias actually points at.
@@ -99,6 +118,7 @@ echo "      ws://$CAR_HOST:8765   (lidar)"
 echo "      ws://$CAR_HOST:8766   (depth)"
 echo "      ws://$CAR_HOST:8767   (fusion)"
 echo "      ws://$CAR_HOST:8768   (detections)"
+echo "      ws://$CAR_HOST:8769   (driving)"
 echo
 echo "The desktop app, not app.foxglove.dev — a browser blocks plain ws:// from"
 echo "an HTTPS page as mixed content, which fails the same opaque way."
