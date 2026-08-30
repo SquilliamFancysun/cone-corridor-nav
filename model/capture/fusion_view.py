@@ -494,6 +494,9 @@ def main(argv=None):
         print("\nstopping")
     finally:
         reader.stop()
+        # Join before closing: the reader blocks in handle.read(), and closing
+        # underneath it raises TypeError out of the thread. 50 ms read timeout.
+        reader.join(timeout=1.0)
         handle.close()
         device.close()
         if server is not None:

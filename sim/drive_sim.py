@@ -291,7 +291,7 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
              dropout=(), seed=None, start=None, stall_ticks=20,
              detection_age_s=0.0, fill_sides=True,
              latency_ticks=DEFAULT_LATENCY_TICKS, servo_tau_s=SERVO_TAU_S,
-             fill_in_fov=False):
+             fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW):
     """Drive the layout. Returns a SimResult; never raises on a bad run."""
     intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
@@ -302,6 +302,7 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
     # The commands in flight between perception and the servo.
     pipeline_delay = [0.0] * max(0, int(latency_ticks))
     actual_delta = 0.0
+    steer_history = []
     stalled = 0
     distance = 0.0
     max_steer = 0.0
@@ -334,8 +335,12 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
                                  origin=rear_axle_in_base)
         duty_now = speed_ctrl.ramp(duty_now, target.duty)
 
-        commanded = (pursuit.normalised * pure_pursuit.MAX_STEER_RAD
-                     if pursuit else 0.0)
+        # Median-filter the command exactly as drive_corridor.py does, so a
+        # gain chosen here is chosen against the same signal the car acts on.
+        steer_history, commanded = pure_pursuit.smooth(
+            steer_history,
+            pursuit.normalised * pure_pursuit.MAX_STEER_RAD if pursuit else None,
+            window=smooth_window)
         # Age the command through the perception-to-actuator delay, then let the
         # servo chase it rather than snapping to it.
         pipeline_delay.append(commanded)

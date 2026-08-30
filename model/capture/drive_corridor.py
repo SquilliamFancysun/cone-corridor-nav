@@ -63,7 +63,6 @@ from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_perception import clustering, extrinsics, fusion
 from joystick import Joystick, JoystickNotFound
-from ld06 import bin_scan
 from lidar_view import BAUD, DEFAULT_PORT, open_serial
 
 DEFAULT_PORT_WS = 8769
@@ -106,7 +105,8 @@ DRIVE_STATUS_SCHEMA = {
         "mode": {"type": "string"},
         "duty": {"type": "number"},
         "steer_deg": {"type": "number", "description": "commanded, left positive"},
-        "steer_normalised": {"type": "number"},
+        "steer_normalised": {"type": "number", "description": "raw, before smoothing"},
+        "steer_commanded": {"type": "number", "description": "after the median filter -- what the servo got"},
         "servo": {"type": "number", "description": "what the VESC was told, 0-1"},
         "lookahead_m": {"type": "number"},
         "target_x": {"type": "number"},
@@ -326,13 +326,14 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
 
 
 def status_of(result, cones, filled, line, pursuit, duty, servo, armed, args,
-              scan_age, detection_age, loop_hz):
+              scan_age, detection_age, loop_hz, commanded=0.0):
     return {
         "armed": bool(armed),
         "mode": args.mode,
         "duty": round(duty.duty, 4),
         "steer_deg": round(math.degrees(pursuit.delta_rad), 2) if pursuit else 0.0,
         "steer_normalised": round(pursuit.normalised, 4) if pursuit else 0.0,
+        "steer_commanded": round(commanded, 4),
         "servo": round(servo, 4),
         "lookahead_m": args.lookahead,
         "target_x": round(pursuit.target[0], 3) if pursuit else 0.0,
@@ -404,6 +405,11 @@ def parse_args(argv=None):
     parser.add_argument("--invert-steering", action="store_true",
                         help="flip the servo sign. Decide this on a stand with "
                              "--steer-only, never on the track")
+    parser.add_argument("--smooth-window", type=int,
+                        default=pure_pursuit.SMOOTH_WINDOW,
+                        help="median window on the steering command. 5 suits a "
+                             "slow first run; drop it as --max-duty goes up, "
+                             "since the lag costs more the faster the car moves")
     parser.add_argument("--no-fill", action="store_true",
                         help="disable near-field geometric side assignment")
 
@@ -522,6 +528,7 @@ def main(argv=None):
     started = time.monotonic()
     axis_rad = 0.0
     duty_now = 0.0
+    steer_history = []
     last_scan_at = started
     last_report = started
     loops = 0
@@ -562,7 +569,13 @@ def main(argv=None):
                 target_duty = 0.0
             duty_now = speed_ctrl.ramp(duty_now, target_duty)
 
-            steer = pursuit.normalised if pursuit is not None else 0.0
+            # Median-filter before the servo ever sees it. The raw command is
+            # quiet with discrete slams -- see SMOOTH_WINDOW in pure_pursuit --
+            # and those slams are the chain flickering, not the corridor moving.
+            steer_history, steer = pure_pursuit.smooth(
+                steer_history,
+                pursuit.normalised if pursuit is not None else None,
+                window=args.smooth_window)
             servo = 0.0
             if vesc is not None:
                 if armed:
@@ -576,7 +589,8 @@ def main(argv=None):
             elapsed = now - started
             status = status_of(result, cones, filled, line, pursuit, duty,
                                servo, armed, args, scan_age, detection_age,
-                               loops / elapsed if elapsed else 0.0)
+                               loops / elapsed if elapsed else 0.0,
+                               commanded=steer)
 
             wall = time.time()
             if sinks.available:
@@ -608,6 +622,12 @@ def main(argv=None):
             vesc.close()
         reader.stop()
         detector_thread.stop()
+        # Join before closing the port. stop() only sets a flag, and the reader
+        # spends most of its life blocked in handle.read(); closing underneath
+        # it makes pyserial read a None fd and raise TypeError out of a thread,
+        # which prints a traceback over the run's own summary. The read timeout
+        # is 50 ms, so this returns promptly or the thread was already gone.
+        reader.join(timeout=1.0)
         handle.close()
         device.close()
         deadman.close()

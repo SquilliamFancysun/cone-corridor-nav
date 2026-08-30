@@ -45,6 +45,41 @@ import math
 # record the number here.
 MAX_STEER_RAD = 0.35
 
+# How many recent commands the median is taken over. Pure pursuit's output is
+# only as steady as the centerline under it, and the centerline is not steady:
+# measured over 771 drivable ticks of trial dry-1336, the command changed by a
+# median of 0.12 deg between ticks and by more than 10 deg on 8.3% of them --
+# quiet, with discrete slams. Every one of those coincided with the lookahead
+# target jumping more than 10 cm sideways as the chain flickered between two
+# neighbouring solutions, and 44% with the chain gaining or losing a point.
+#
+# A MEDIAN, not an average and not a rate limit. The spikes are outliers rather
+# than noise -- 47 of the 57 excursions lasted a single tick -- and a median
+# discards an outlier outright while passing a real corner through undistorted,
+# where a mean would smear every spike across the whole window and a rate limit
+# would add lag on every tick to defend against one tick in twelve.
+#
+# 5 rather than 3 because 3 still let a 14 deg slam through: the seven two-tick
+# excursions outvote a window of three. Measured over the same trial, median-5
+# caps the worst tick-to-tick change at 5.4 deg against 14.0 for median-3.
+#
+# THIS WINDOW IS SPEED-DEPENDENT and 5 is right only while the car is slow. A
+# median of five costs two ticks of lag, which is nothing at a walking pace and
+# expensive once the car covers real ground in 0.2 s. Mean cross-track error on
+# the sim's s-bend, by window:
+#
+#     speed      raw    med-3    med-5    med-7
+#     0.6 m/s    1.0      0.8      0.7      0.7     <- filtering is free
+#     1.2 m/s    0.8      1.0      1.5      2.3
+#     2.4 m/s    2.5      4.4      9.6     13.7     <- lag now dominates
+#     3.6 m/s    5.1     11.5     13.5     17.5
+#
+# So: 5 for a first demo at --max-duty 0.05-0.10. Drop to 3, then to 1, as the
+# duty cap goes up. drive_corridor.py exposes --smooth-window for exactly that,
+# and raising the speed without lowering the window trades one kind of bad
+# tracking for another.
+SMOOTH_WINDOW = 5
+
 # A target nearer than this is not steerable -- the geometry divides by the
 # distance to it, so a point on top of the axle produces an enormous curvature
 # from what is probably just noise in the nearest midpoint.
@@ -81,6 +116,24 @@ class PursuitResult(object):
 
 def clamp(value, low, high):
     return low if value < low else (high if value > high else value)
+
+
+def smooth(history, value, window=SMOOTH_WINDOW):
+    """Median-filter a steering command. Returns `(history, filtered)`.
+
+    Pure -- the caller holds the history, as it does for `speed_ctrl.ramp`.
+
+    `value` may be None, meaning pure pursuit found nothing steerable. That
+    CLEARS the history rather than feeding a zero into it. Feeding zeros would
+    let a brief perception dropout drag the filter toward centre and then have
+    it climb back out over the next few ticks, steering the car on the memory of
+    a corridor it could not see. An empty history also means re-acquisition
+    starts from the new corridor rather than the old one.
+    """
+    if value is None:
+        return [], 0.0
+    history = (history + [value])[-window:]
+    return history, sorted(history)[len(history) // 2]
 
 
 def _segment_circle_t(p1, p2, origin, radius):

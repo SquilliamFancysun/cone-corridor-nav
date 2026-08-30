@@ -18,6 +18,7 @@ from cone_nav.control.pure_pursuit import (
     MAX_STEER_RAD,
     MIN_TARGET_M,
     lookahead_point,
+    smooth,
     steering_angle,
 )
 
@@ -207,3 +208,89 @@ def test_normalised_saturates_at_full_lock():
 def test_normalised_is_the_angle_over_the_limit():
     result = steering_angle(arc(3.0), 1.5, WHEELBASE)
     assert result.normalised == pytest.approx(result.delta_rad / MAX_STEER_RAD)
+
+
+# --- the median filter --------------------------------------------------
+
+def test_a_single_tick_spike_is_rejected_outright():
+    """The measured failure: the command sits quiet and then slams as the
+    centerline chain flickers between two neighbouring solutions."""
+    history, out = [], None
+    for value in (1.5, 1.5, 1.5, 13.5, 1.5):
+        history, out = smooth(history, value)
+    assert out == pytest.approx(1.5)
+
+
+def test_a_two_tick_spike_is_rejected_by_five_but_not_by_three():
+    """Why the window is 5. Seven of the trial's excursions lasted two ticks,
+    and two of those outvote a window of three."""
+    def run(window, values):
+        history, out = [], None
+        for v in values:
+            history, out = smooth(history, v, window=window)
+        return out
+
+    values = (1.5, 1.5, 1.5, 13.5, 13.0)
+    assert run(5, values) == pytest.approx(1.5)
+    assert run(3, values) > 5.0
+
+
+def test_a_real_corner_passes_through_undistorted():
+    """A median must not smear a sustained change the way a mean would. Once
+    the new value holds for a majority of the window, it IS the output."""
+    history, out = [], None
+    for value in (0.0, 0.0, 8.0, 8.0, 8.0):
+        history, out = smooth(history, value)
+    assert out == pytest.approx(8.0)
+
+
+def test_the_filter_lags_by_half_a_window_on_a_step():
+    """The cost, stated so it cannot be forgotten: two ticks at window 5. That
+    is free at walking pace and expensive above about 2 m/s -- see the table on
+    SMOOTH_WINDOW."""
+    history = []
+    for _ in range(5):
+        history, _ = smooth(history, 0.0)
+    outs = []
+    for _ in range(3):
+        history, out = smooth(history, 10.0)
+        outs.append(out)
+    assert outs[0] == pytest.approx(0.0)
+    assert outs[1] == pytest.approx(0.0)
+    assert outs[2] == pytest.approx(10.0)
+
+
+def test_no_target_clears_the_history_rather_than_feeding_a_zero():
+    """A dropout must not drag the filter toward centre and then have it climb
+    back out, steering on the memory of a corridor the car could not see."""
+    history = []
+    for _ in range(5):
+        history, _ = smooth(history, 8.0)
+    history, out = smooth(history, None)
+    assert history == []
+    assert out == 0.0
+    # Re-acquisition starts from the new corridor, not the old one.
+    history, out = smooth(history, -3.0)
+    assert out == pytest.approx(-3.0)
+
+
+def test_it_fills_from_the_first_sample():
+    """No warm-up period where the output is meaningless."""
+    history, out = smooth([], 4.0)
+    assert out == pytest.approx(4.0)
+
+
+def test_the_window_never_grows_past_its_bound():
+    history = []
+    for i in range(50):
+        history, _ = smooth(history, float(i))
+    assert len(history) == 5
+
+
+def test_window_of_one_is_a_passthrough():
+    """The escape hatch for a fast run, where the lag costs more than the
+    spikes do."""
+    history, out = [], None
+    for value in (1.0, 99.0, 2.0):
+        history, out = smooth(history, value, window=1)
+    assert out == pytest.approx(2.0)
