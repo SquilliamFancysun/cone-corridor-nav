@@ -10,6 +10,10 @@ than counting by hand; the numbers below should be measurements.
 Numbers below are from the **v2 export** (`cone-detector-nfjog` version 2,
 exported 2026-08-29). Lines marked TODO are the ones nobody has measured yet.
 
+The three `will*` sessions (2026-08-29, 553 frames) are uploaded but not yet
+labelled, so they are absent from every count in Composition. Those counts
+describe v2 and will not describe v3.
+
 ## Composition
 - Total images: **1777**
 - Per class instance counts: blue **1863** / magenta **370** / orange **2415** /
@@ -64,6 +68,9 @@ _One row per capture session — this table is what defines the split._
 | 20260828_1328_eli4 | train | cone zoo | 410 / 424 | 80 | hand | |
 | 20260828_1348_eli5 | train | cone zoo | 547 / 549 | 80 | hand | |
 | 20260828_1354_eli6 | train | cone zoo | 400 / 402 | 80 | hand | `lens_position=0` |
+| 20260829_1718_will1 | train | corridor + goal | 281 / 285 | 281 | hand | Trophy cluster, no gate. Labeling pending |
+| 20260829_1724_will2 | test | corridor + goal | 177 / 182 | 177 | hand | Adds the red gate pair and orange stub, so the test set covers all five classes. Labeling pending |
+| 20260829_1726_will3 | valid | corridor + goal | 95 / 99 | 95 | hand | Puts real magenta in valid, where early stopping can finally see it. Labeling pending |
 
 Captured − kept is the `prepare_dataset.py` cull (blurry frames and
 near-duplicates). Rejects are **moved** to `<session>/_rejected/`, never deleted.
@@ -88,6 +95,12 @@ near-duplicates). Rejects are **moved** to `<session>/_rejected/`, never deleted
   other four classes appear in both contexts and all improved. This is a domain
   gap, not a volume problem — more zoo data will not close it. On-track frames
   with the goal cone in view are what is missing.
+  Addressed on 2026-08-29: the `will*` sessions put a three-cone magenta
+  trophy at the end of a track-spec corridor and sweep it from ~11 m to ~1 m,
+  so magenta now appears framed by boundary cones instead of staged alone.
+  Split across train/test/valid, which is the other half of the fix — v2 could
+  not be assessed on magenta because no valid instances of it existed to score
+  against. All three share one lighting condition; a second is still owed.
 - **254 empty label files in train** (~127 originals before augmentation, ~16%
   of uploaded train frames). Not audited: if those are genuinely empty scenes
   they are fine, and if they are frames someone skipped in the labeler they are
