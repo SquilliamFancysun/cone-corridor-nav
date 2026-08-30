@@ -2,7 +2,7 @@
 # dataset this model was trained on. Images are gitignored, so the
 # paths point at a local export; re-download it with
 #   python roboflow_export.py --version N
-path: ../export/cone-detector-nfjog-v2
+path: ../export/cone-detector-nfjog-v3
 train: train/images
 val: valid/images
 test: test/images
