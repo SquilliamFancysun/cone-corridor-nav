@@ -1,0 +1,126 @@
+{
+  "augmentation_note": "hue and saturation jitter are pinned to 0: color is the class signal",
+  "class_names": [
+    "blue",
+    "magenta",
+    "orange",
+    "red",
+    "yellow"
+  ],
+  "config": {
+    "batch": 16,
+    "close_mosaic": 10,
+    "data": "C:\\Dev\\GitHub\\cone-corridor-nav\\model\\dataset\\export\\cone-detector-nfjog-v3\\data.yaml",
+    "degrees": 0.0,
+    "device": "0",
+    "epochs": 100,
+    "exist_ok": true,
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.2,
+    "imgsz": 640,
+    "model": "yolov8n.pt",
+    "mosaic": 1.0,
+    "name": "v3",
+    "patience": 20,
+    "plots": true,
+    "pretrained": true,
+    "project": "C:\\Dev\\GitHub\\cone-corridor-nav\\model\\training",
+    "scale": 0.5,
+    "seed": 0,
+    "translate": 0.1,
+    "val": true,
+    "workers": 8
+  },
+  "data_yaml_sha256": "52533dd6c26f16a144479d9d7ec839ecbe74472f68a68c9db4602288820fd277",
+  "dataset_manifest": {
+    "class_names": [
+      "blue",
+      "magenta",
+      "orange",
+      "red",
+      "yellow"
+    ],
+    "class_order_source": "C:\\Dev\\GitHub\\cone-corridor-nav\\ros2\\src\\cone_msgs\\msg\\LabeledCone.msg",
+    "exported_utc": "2026-08-30T02:08:20+00:00",
+    "location": "C:\\Dev\\GitHub\\cone-corridor-nav\\model\\dataset\\export\\cone-detector-nfjog-v3",
+    "roboflow": {
+      "format": "yolov8",
+      "labels_normalized": {
+        "converted_files": 1585,
+        "converted_rows": 10624,
+        "files": 2611
+      },
+      "project": "cone-detector-nfjog",
+      "version": "3",
+      "workspace": "r-william-thatcher-s-workspace"
+    },
+    "splits": [
+      {
+        "images": 2176,
+        "instances": {
+          "blue": 2066,
+          "magenta": 678,
+          "orange": 2518,
+          "red": 4070,
+          "yellow": 1848
+        },
+        "labels": 2176,
+        "sessions": {
+          "20260827_1053_lot-sun-A": 14,
+          "20260827_1503_eli1": 800,
+          "20260828_1320_eli2": 160,
+          "20260828_1324_eli3": 160,
+          "20260828_1328_eli4": 160,
+          "20260828_1348_eli5": 160,
+          "20260828_1354_eli6": 160,
+          "20260829_1718_will1": 562
+        },
+        "split": "train"
+      },
+      {
+        "images": 195,
+        "instances": {
+          "blue": 732,
+          "magenta": 146,
+          "orange": 178,
+          "red": 403,
+          "yellow": 725
+        },
+        "labels": 195,
+        "sessions": {
+          "20260827_1429_ebu2_test_2": 100,
+          "20260829_1726_will3": 95
+        },
+        "split": "valid"
+      },
+      {
+        "images": 240,
+        "instances": {
+          "blue": 772,
+          "magenta": 233,
+          "orange": 67,
+          "red": 178,
+          "yellow": 766
+        },
+        "labels": 240,
+        "sessions": {
+          "20260827_1413_ebu2_test": 63,
+          "20260829_1724_will2": 177
+        },
+        "split": "test"
+      }
+    ]
+  },
+  "git_commit": "fcbba9b",
+  "git_dirty": true,
+  "versions": {
+    "cuda": "12.8",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.4",
+    "torch": "2.9.1+cu128",
+    "ultralytics": "8.4.131"
+  }
+}
