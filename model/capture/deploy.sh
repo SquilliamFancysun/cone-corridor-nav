@@ -9,6 +9,12 @@
 #   ~/env/bin/pip install foxglove-sdk      (needs Python 3.10+)
 # Without it the tool still records scans.jsonl, so a failed install at the
 # track does not cost the run.
+
+# detect_view.py and fusion_view.py additionally need torch and ultralytics, and
+# installing those the obvious way breaks capture_cones.py: ultralytics pulls
+# plain opencv-python into an ~/env that already has opencv-contrib-python, and
+# the two fight over the same cv2/ directory. See "Install" under "Camera: the
+# detector's view" in README.md for the --no-deps recipe that avoids it.
 set -euo pipefail
 
 HOST="${1:-robocar}"

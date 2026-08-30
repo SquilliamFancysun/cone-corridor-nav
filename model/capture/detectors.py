@@ -10,8 +10,9 @@ The backends live here, in model/capture/, rather than in cone_perception,
 because they import depthai and ultralytics. cone_perception stays pure so it
 can be unit-tested on a laptop and reused verbatim by a ROS node.
 
-    ultralytics   v1 best.pt on the Pi's CPU. ~3-5 fps at 416. Too slow to
-                  drive on; fast enough to validate fusion by hand-pushing.
+    ultralytics   best.pt on the Pi's CPU. ~8.6 fps at 416, measured on the
+                  Pi 5 with v3 weights (111 ms/frame). Too slow to drive on;
+                  fast enough to validate fusion by hand-pushing.
     blob          NOT IMPLEMENTED. The OAK-D runs the model on its own Myriad X
                   at camera rate. Needs model/export/ populated first.
     replay        Recorded frames plus their labels. No hardware at all.
@@ -107,6 +108,7 @@ class UltralyticsDetector(object):
         self.conf = conf
         self.device = device
         self._warned = False
+        self._frames = 0
 
     def detect(self, frame, captured_at):
         """BGR ndarray -> DetectionSet."""
@@ -124,7 +126,13 @@ class UltralyticsDetector(object):
                 out.append(_to_detection(int(box.cls[0]), float(box.conf[0]),
                                          x1, y1, x2, y2, width, height))
         elapsed = time.monotonic() - started
-        if elapsed > 0.5 and not self._warned:
+        # The first predict() is ultralytics warming up -- it allocates and runs
+        # the graph once, and on the Pi that frame alone costs ~1.5 s against a
+        # ~0.11 s steady state. Judging the run by it fired this warning on every
+        # single run and told everyone to try --imgsz 320 for nothing, so the
+        # warmup frame is measured but never used as the verdict.
+        self._frames += 1
+        if self._frames > 1 and elapsed > 0.5 and not self._warned:
             self._warned = True
             print(f"warning: inference is taking {elapsed:.2f} s per frame. "
                   "Every label will be stale; try --imgsz 320.")

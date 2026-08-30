@@ -31,11 +31,13 @@ from cone_perception.cone_classes import UNLABELED, name_of
 # harness reports matched/unmatched counts so that shows up immediately.
 MAX_BEARING_ERR_DEG = 4.0
 
-# Ultralytics on the Pi 5 runs ~3-5 fps against a 10 Hz scan, so detections are
+# Ultralytics on the Pi 5 runs ~8.6 fps against a 10 Hz scan, so detections are
 # always somewhat behind the scan they are being matched to. At a hand-pushed
 # 0.5 m/s, 300 ms is 15 cm -- a fifth of the tightest cone spacing, tolerable.
 # Beyond it, a label is more likely to be attached to the wrong cone than the
-# right one, and UNLABELED is the honest answer.
+# right one, and UNLABELED is the honest answer. The bound stays at 300 ms as
+# the detector gets faster: it is a tolerance, not a target, and more headroom
+# is not a reason to loosen it.
 MAX_DETECTION_AGE_S = 0.30
 
 

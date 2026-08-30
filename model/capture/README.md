@@ -127,7 +127,7 @@ of this table; trust it over the arithmetic.
 
 | | |
 |---|---|
-| `ultralytics` | v1 `best.pt` on the Pi's CPU, ~3–5 fps at 416. Too slow to drive on; fine for validating fusion by hand-pushing the car |
+| `ultralytics` | `best.pt` on the Pi's CPU, ~8.6 fps at 416 (111 ms/frame, measured with v3). Too slow to drive on; fine for validating fusion by hand-pushing the car |
 | `blob` | The OAK-D running the model itself. **Not implemented** — `model/export/` is empty |
 | `replay` | A recorded session's frames and `_prelabel` labels. No hardware; runs at a desk |
 
@@ -591,6 +591,42 @@ python detect_view.py --weights ~/models/best.pt
 Foxglove on `ws://<car-ip>:8768`, Image panel on `/detections`. Port 8768, so
 the lidar (8765), depth (8766) and fusion (8767) views keep theirs.
 
+### Install
+
+`detect_view.py` needs `torch` and `ultralytics` on the car, and the image does
+not ship them. **Do not install them the obvious way.** `ultralytics` depends on
+plain `opencv-python`, and `~/env` already carries `opencv-contrib-python` (the
+cv2 that actually imports) beside `opencv-python-headless`. A third distribution
+writes into that same `cv2/` directory, and `capture_cones.py` dies with
+whichever copy loses. Snapshot first, then install around the problem:
+
+```
+source ~/env/bin/activate
+pip freeze > ~/pip-freeze-before-torch.txt
+pip install "numpy==1.26.4" torch torchvision
+pip install "numpy==1.26.4" filelock polars nvidia-ml-py ultralytics-thop ultralytics-platform
+pip install --no-deps ultralytics
+```
+
+`--no-deps` is what keeps opencv out; the line above it supplies the runtime
+dependencies that flag suppresses. `numpy` is pinned to the version already
+installed so the resolver cannot pull numpy 2 out from under `depthai` and
+donkeycar.
+
+Then check that the capture stack still imports, because that is the thing this
+dance exists to protect:
+
+```
+python -c "import cv2, numpy, depthai; print(cv2.__version__, numpy.__version__, depthai.__version__)"
+```
+
+Expect `4.9.0 1.26.4 2.21.2.0` — unchanged. If it is not, roll back from the
+freeze file before running anything else.
+
+Torch's aarch64 wheel is a CUDA build, so it drags ~2.9 GB of NVIDIA libraries
+onto a Pi with no NVIDIA GPU. Wasted disk rather than a fault, and all of it
+comes back off when the `.blob` lands and the host stops running the model.
+
 ### What it is for, and what it is not
 
 `evaluate.py` answers "is this model good" with numbers on a labelled split, and
@@ -651,6 +687,42 @@ python detect_view.py --weights ../training/v3/weights/best.pt \
 `--window` opens a cv2 window, which needs a display and so is for the laptop,
 not the car. `opencv-python-headless` cannot do it either; the full
 `opencv-python` can.
+
+### Installing it off the car
+
+The laptop needs its own environment; nothing is shared with `~/env` on the Pi.
+Build it against a Python you name explicitly — on macOS `python3` is Apple's 3.9
+and fails later in a way that blames the wrong thing (see
+`model/requirements.txt`):
+
+```
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install torch torchvision          # Apple silicon: MPS, smoke tests only
+pip install ultralytics opencv-python
+```
+
+`opencv-python`, not `-headless`, or `--window` has nothing to draw on. There is
+no pre-existing cv2 here to collide with, so unlike the car this is an ordinary
+install and needs none of that section's care.
+
+That is everything `--frames` needs. The live camera off the car additionally
+wants `depthai`, libusb, and the OAK-D itself — it answers one host at a time, so
+it has to come off the Pi first:
+
+```
+brew install libusb                    # macOS
+pip install "depthai~=2.32.0"
+```
+
+**Pin depthai to 2.x.** A bare `pip install depthai` now resolves to 3.x, which
+is a breaking API rewrite: `oakd.py` builds its pipeline out of
+`dai.node.ColorCamera`, `CameraBoardSocket.RGB` and `getOutputQueue`, and none of
+the three survive it. 2.32.0.0 is the newest 2.x with wheels through CPython
+3.13.
+
+`foxglove-sdk` is not needed off the car. `--window` satisfies the "somewhere to
+draw" check by itself, and a local cv2 window beats a websocket to localhost.
 
 ### Useful flags
 
