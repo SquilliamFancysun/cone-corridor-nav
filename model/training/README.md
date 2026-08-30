@@ -111,3 +111,35 @@ full resolved config, and the dataset manifest if the export came from
 Weights do not: `*.pt` is gitignored. Attach `best.pt` to a GitHub Release, then
 convert it to a `.blob` for the OAK-D — see the export section of
 [`../dataset/LABELING.md`](../dataset/LABELING.md).
+
+```bash
+gh release create weights-v<N> v<N>/weights/best.pt v<N>/train_config.json \
+    --title "Cone detector v<N> weights" --target <the commit holding the run>
+```
+
+`train_config.json` goes up alongside the weights on purpose. It is already in
+git, but a downloaded `best.pt` on a machine with no clone is otherwise a file
+with no idea what produced it.
+
+## Getting weights onto the car
+
+The release is the transfer, not just the archive: training happens on whichever
+machine has the GPU, and the car is reached from whichever machine has the ssh
+alias. Those are not always the same machine, and the weights have to cross.
+
+```bash
+gh release download weights-v3 --pattern 'best.pt'
+scp best.pt <car>:models/best.pt
+```
+
+Then check the hash against the one in the release notes before trusting it —
+`sha256sum best.pt` on the car. A truncated `scp` leaves a file that ultralytics
+still loads, and the failure that follows looks like a bad model rather than a
+bad copy.
+
+`deploy.sh` deliberately does not carry weights. It rsyncs with `--delete`, and
+a 6 MB binary re-pushed on every code deploy would be slow for no reason —
+weights change on their own schedule.
+
+The current release is **`weights-v3`**. Verify it on the car with
+`../capture/detect_view.py` before anything downstream depends on it.

@@ -42,6 +42,21 @@ in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants
 an SDL video driver we do not have over SSH). The lidar tool wants one package —
 see [Install](#install) below.
 
+**Weights are not deployed.** `deploy.sh` pushes code; `*.pt` is gitignored and
+lives on a GitHub Release instead, because weights change on their own schedule
+and a 6 MB binary re-pushed on every code deploy would be slow for no reason.
+`detect_view.py` and `fusion_view.py` both want a `--weights` path that already
+exists on the car:
+
+```bash
+gh release download weights-v3 --pattern 'best.pt'
+scp best.pt <car>:models/best.pt
+```
+
+See [`../training/README.md`](../training/README.md#getting-weights-onto-the-car)
+for the hash check, which is worth doing — a truncated `scp` leaves a file that
+still loads.
+
 ## Fusion and the corridor centerline
 
 ```
