@@ -28,8 +28,17 @@ git -C "$HERE" rev-parse --short HEAD > "$HERE/VERSION" 2>/dev/null || echo "unk
 # describes this car's lidar mount. --delete would take it out on every deploy,
 # and the next session would then record an unverified bearing sign without
 # anyone noticing, so it is excluded from both halves of the sync.
+#
+# The same trap, found the hard way: --delete removes ANY file the car has that
+# the source tree does not, and the trial logs the tools write land right here.
+# A deploy between a run and reading its log destroyed 22 s of stage-3 data that
+# only existed on the car. Excluded now -- run data is the one thing on the car
+# that cannot be regenerated from the repo.
 rsync -av --delete \
   --exclude='__pycache__' \
+  --exclude='*.jsonl' \
+  --exclude='*.mcap' \
+  --exclude='sessions' \
   --exclude='.pytest_cache' \
   --exclude='.ruff_cache' \
   --exclude='test_*.py' \
