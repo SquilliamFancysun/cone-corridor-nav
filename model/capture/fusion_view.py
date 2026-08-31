@@ -282,10 +282,18 @@ class LidarReader(threading.Thread):
         self.latest = None
         self.count = 0
         self._lock = threading.Lock()
-        self._stop = threading.Event()
+        # NOT `self._stop`. threading.Thread has a private `_stop()` METHOD,
+        # and Thread.join -> _wait_for_tstate_lock calls it once the thread has
+        # finished. An attribute of that name shadows it, so join() raises
+        # `TypeError: 'Event' object is not callable` -- on the way out of a
+        # tool, from inside `finally`, after the run is over. Under torch it
+        # comes out as a C++ std::terminate and a SIGABRT over the top of the
+        # run's own summary. Observed on the car; see test_the_stop_flag_does_
+        # not_shadow_threads_own_stop.
+        self._stopping = threading.Event()
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._stopping.is_set():
             data = self.handle.read(4096)
             if not data:
                 continue
@@ -304,7 +312,7 @@ class LidarReader(threading.Thread):
             return scan
 
     def stop(self):
-        self._stop.set()
+        self._stopping.set()
 
 
 def pipeline_once(scan, detection_set, calibration, intr, args, now):
