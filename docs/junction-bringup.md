@@ -93,12 +93,17 @@ python drive_junction.py --weights ~/models/best.pt \
 `--dry-run` never opens the VESC. Watch the state line — it prints on every
 transition — and expect exactly one `follow → approach → traverse → follow`.
 
-Then read the log rather than trusting the impression:
+Then read the log rather than trusting the impression. The car has no `jq`,
+and a check you retype at the bench from a document is a check that gets
+skipped, so it is a script:
 
 ```sh
-jq -r 'select(.gate_live) | "\(.t)  gate \(.gate_range_m)m  gaps \(.gate_gaps_m)"' junction-see.jsonl
-jq -s '[.[] | select(.gate_live)] | length' junction-see.jsonl
+~/env/bin/python junction_report.py junction-see.jsonl
 ```
+
+It prints the table below with the measured value beside each expectation.
+`OK`/`CHECK` is a reading aid, not a gate — a run it calls `CHECK` may still be
+fine, and one it calls `OK` can still have driven badly.
 
 | What to check | Expect | If not |
 |---|---|---|
