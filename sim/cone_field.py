@@ -167,6 +167,122 @@ def dead_end_wall(junction, heading_deg, length, segment,
     return [Cone(ORANGE, end[0], end[1], segment)]
 
 
+# --- junction v2: the staggered fork ------------------------------------
+#
+# See data/layouts/junction_v2.md. Three red cones across the mouth, and each
+# branch starting at its OWN gate midpoint rather than at the junction centre.
+# That stagger pre-separates the branches by most of a corridor width, so both
+# walls of both branches exist from the first row and `branch()`'s island-nose
+# machinery is not needed at all.
+
+# The gap between adjacent red cones, which is also the width of each mouth.
+#
+# Chosen against two limits that move in OPPOSITE directions as the gate widens.
+# Measuring to the junction line, the outer reds (which sit `gap` off the axis):
+#
+#   - enter lidar range at  sqrt(3.0^2 - gap^2)         wider gate -> nearer
+#   - leave the camera frame at  gap / tan(32.5 deg)    wider gate -> further
+#
+#     gap    span   detection window   ticks at 1.2 m/s
+#     1.30   2.60   0.66 m             5.5
+#     1.35   2.70   0.56 m             4.7
+#     1.50   3.00   0.24 m             2.0
+#
+# and the span (2 * gap) must clear centerline.MAX_PAIR_EDGE_M = 2.5, or the
+# triangulation pairs the outer reds and drops a phantom gate midpoint on the
+# centre cone. That rules out 1.25 m and below. 1.35 m keeps 0.20 m of margin
+# over the pairing limit and still leaves the machine about five ticks to see
+# the junction in. 1.50 m is the tidy-looking number that leaves two.
+JUNCTION_GATE_GAP_M = 1.35
+
+# Shallower than track_v1's 25 deg because the stagger now does the separating
+# that divergence used to have to do. Less corner-cut across the centre cone,
+# and more margin inside the ~69 deg HFOV.
+JUNCTION_DIVERGENCE_DEG = 20.0
+
+# Long enough that the car is committed before the wall is obvious.
+JUNCTION_STUB_M = 2.5
+
+
+def junction_gate(centre, heading_deg, segment, gap=JUNCTION_GATE_GAP_M):
+    """The three red cones across a junction mouth, left to right.
+
+    The centre cone is shared by both gates and is the island nose --
+    `junction_exec.keep_branch` cuts the scene on it. track_v1's `gate_pair`
+    put two reds across the corridor as a landmark; this triple is a landmark
+    AND a divider AND two mouths.
+    """
+    return [Cone(RED, *_offset(centre, heading_deg, gap), segment),
+            Cone(RED, *centre, segment),
+            Cone(RED, *_offset(centre, heading_deg, -gap), segment)]
+
+
+def gate_midpoint(centre, heading_deg, left, gap=JUNCTION_GATE_GAP_M):
+    """Where a branch begins: halfway between the centre red and an outer one."""
+    return _offset(centre, heading_deg, (gap / 2.0) if left else -(gap / 2.0))
+
+
+def staggered_branch(origin, heading_deg, length, segment,
+                     spacing=FORK_SPACING_M,
+                     half_width=CORRIDOR_WIDTH_M / 2.0):
+    """One branch, from its own gate midpoint, with both walls from row one.
+
+    Compare `branch()`, which needs `inner_start` and `nose_clearance_m`
+    because its two branches share an origin and their inner walls are on the
+    wrong sides of each other until `half_width / tan(divergence)` past it. Two
+    origins a gate-gap apart start already separated, so there is no nose to
+    clear and no ambiguous region to skip -- which is the entire reason junction
+    v2 is laid this way.
+
+    Row 0 is skipped: a boundary cone on the junction line would sit in the
+    mouth the car has to drive through.
+    """
+    rows = max(2, int(round(length / spacing)))
+    cones = []
+    for i in range(1, rows + 1):
+        centre = _along(origin, heading_deg, spacing * i)
+        cones.append(Cone(BLUE, *_offset(centre, heading_deg, half_width), segment))
+        cones.append(Cone(YELLOW, *_offset(centre, heading_deg, -half_width), segment))
+    return cones
+
+
+def track_junction(turn="left", gap=JUNCTION_GATE_GAP_M,
+                   divergence_deg=JUNCTION_DIVERGENCE_DEG,
+                   stub_m=JUNCTION_STUB_M, spacing=FORK_SPACING_M,
+                   approach_m=2.25, exit_m=3.5):
+    """One junction v2 fork: approach, red triple, a routed branch and a stub.
+
+    `approach_m` stops the incoming corridor 0.75 m short of the red line, so
+    the boundary spacing across the junction is one 1.5 m gap rather than a
+    cone sitting in the mouth. The routed branch ends at a magenta goal; the
+    other is walled with an orange cone, which is what a dead end is made of.
+    """
+    if turn not in ("left", "right"):
+        raise ValueError(f"turn must be 'left' or 'right', got {turn!r}")
+    routed_left = turn == "left"
+    origin = (0.0, 0.0)
+    junction = _along(origin, 0.0, approach_m + spacing)
+
+    cones = corridor_segment(origin, 0.0, approach_m, "corridor_a",
+                             spacing=spacing)
+    cones += junction_gate(junction, 0.0, "junction_1", gap=gap)
+
+    routed_sign = 1.0 if routed_left else -1.0
+    routed_head = routed_sign * divergence_deg
+    stub_head = -routed_sign * divergence_deg
+    routed_origin = gate_midpoint(junction, 0.0, routed_left, gap=gap)
+    stub_origin = gate_midpoint(junction, 0.0, not routed_left, gap=gap)
+
+    cones += staggered_branch(routed_origin, routed_head, exit_m, "corridor_b",
+                              spacing=spacing)
+    cones += staggered_branch(stub_origin, stub_head, stub_m, "dead_end_a",
+                              spacing=spacing)
+    cones += dead_end_wall(stub_origin, stub_head, stub_m, "dead_end_a")
+    cones.append(Cone(MAGENTA, *_along(routed_origin, routed_head, exit_m),
+                      "goal"))
+    return cones
+
+
 def track_v1(dead_end_length_m=None):
     """The two-fork corridor of data/layouts/track_v1.md, as designed.
 
@@ -459,3 +575,98 @@ def s_bend_corridor(radius=4.0, sweep_deg=45.0, spacing=STRAIGHT_SPACING_M,
                              lead_in_m=0.0, start=joint,
                              start_heading_deg=heading, skip_first=True)
     return first + second
+
+
+# --- the build sheet ----------------------------------------------------
+
+def dimension_table(cones, origin=None):
+    """Cones as `id,color,x_m,y_m,segment` rows, in track_v1.csv's columns.
+
+    The point of generating this rather than typing it is that
+    `data/layouts/junction_v2.md` is what someone lays the track from. A
+    drawing that drifts from `track_junction()` sends them out with a tape to
+    build something the sim has never driven.
+    """
+    ox, oy = origin or (0.0, 0.0)
+    rows = [("id", "color", "x_m", "y_m", "segment")]
+    for i, cone in enumerate(cones, start=1):
+        rows.append((str(i), cone.color, f"{cone.x - ox:.3f}",
+                     f"{cone.y - oy:.3f}", str(cone.segment)))
+    return rows
+
+
+def format_table(rows):
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    return "\n".join("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip()
+                      for row in rows)
+
+
+def sensor_window(gap=JUNCTION_GATE_GAP_M, lidar_range_m=3.0, half_fov_deg=32.5):
+    """When a whole red triple is both in lidar range and in frame.
+
+    Both limits are set by the outer reds' `gap` metre offset from the axis, and
+    they move in OPPOSITE directions as the gate widens -- which is why the gate
+    width is a compromise and not simply "as wide as the corridor". Distances
+    are to the junction LINE, measured from base_link.
+    """
+    if gap >= lidar_range_m:
+        return (float("nan"), float("nan"), 0.0)
+    far = math.sqrt(lidar_range_m ** 2 - gap ** 2)
+    near = gap / math.tan(math.radians(half_fov_deg))
+    return (near, far, max(0.0, far - near))
+
+
+def main(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Print a layout as a scale diagram and a build table.")
+    parser.add_argument("--layout", default="junction-left",
+                        choices=("junction-left", "junction-right", "track_v1"))
+    parser.add_argument("--diagram", action="store_true")
+    parser.add_argument("--table", action="store_true")
+    parser.add_argument("--window", action="store_true",
+                        help="the gate-width tradeoff table")
+    args = parser.parse_args(argv)
+
+    if args.layout == "track_v1":
+        cones, origin = track_v1(), (0.0, 0.0)
+    else:
+        turn = args.layout.split("-", 1)[1]
+        cones = track_junction(turn)
+        # Re-origin on the centre red cone, so the numbers are the ones a tape
+        # measure at the junction produces.
+        centre = [c for c in cones if c.color == RED][1]
+        origin = (centre.x, centre.y)
+
+    if not (args.diagram or args.table or args.window):
+        args.diagram = args.table = True
+
+    if args.diagram:
+        # Local import: drive_sim imports this module, so a top-level import
+        # would be circular.
+        from sim.drive_sim import plot
+
+        class _NoRun(object):
+            """A finished-run shape with no run in it: this draws the LAYOUT."""
+            ticks = []
+            struck_cone = None
+        print(plot(_NoRun(), cones))
+        print()
+
+    if args.window:
+        print("  gap   span   in frame   in range   window   ticks at 1.2 m/s")
+        for gap in (1.25, 1.30, 1.35, 1.40, 1.45, 1.50):
+            near, far, width = sensor_window(gap)
+            print("  %.2f  %.2f   %.2f m     %.2f m     %.2f m   %.1f"
+                  % (gap, 2 * gap, near, far, width, width / 0.12))
+        print()
+
+    if args.table:
+        print(format_table(dimension_table(cones, origin=origin)))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

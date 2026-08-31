@@ -881,3 +881,71 @@ labelled versus geometry, centerline points and reach, commanded steering, duty,
 servo, and the deadman state. Flushed as it goes, because a run that ends with
 someone lunging for the car is exactly the run worth having the data from. This
 is what `analysis/` consumes.
+
+## Junctions: `drive_junction.py`
+
+`drive_corridor.py` with a route in its hand. Same arguments, same deadman, same
+three-step ladder — the only additions are `--route` and the junction geometry
+it expects.
+
+**Read `data/layouts/junction_v2.md` before laying the track.** Two of its
+numbers are load-bearing and neither is obvious:
+
+- **Gate gaps of 1.35 m**, not the 1.5 m corridor width. The outer reds enter
+  lidar range and leave the camera frame at distances that move in opposite
+  directions as the gate widens, so a wider gate is visible for *less* time: a
+  whole triple is recoverable for 4.2 ticks at 1.35 m and 2.0 ticks at 1.50 m.
+- **0.75 m spacing, and no denser.** This is the opposite of the advice in
+  `track_v1.md`. Two cones within 3° of each other in bearing merge into one
+  lidar cluster; at 0.5 m spacing a boundary cone lands 0.29 m from an outer red
+  and the junction is never detected on any tick of the approach.
+
+```sh
+# The route file: one 'left' or 'right' per junction, in order.
+cat routes/route_v1.txt          # deploy.sh puts them here
+
+# a) hand-pushed. Nothing actuates. Push the car through the junction and watch
+#    the state line: follow -> approach -> traverse -> follow, once per gate.
+python drive_junction.py --weights ~/models/best.pt \
+    --route routes/route_v1.txt \
+    --dry-run --no-deadman --log junction-dry.jsonl
+
+# b) ON A STAND. Confirm the wheels turn the way the route says, not just that
+#    they turn. A mirrored sign tracks a straight corridor perfectly.
+python drive_junction.py --weights ~/models/best.pt \
+    --route routes/route_v1.txt --steer-only
+
+# c) for real. Hold X to arm.
+python drive_junction.py --weights ~/models/best.pt \
+    --route routes/route_v1.txt --max-duty 0.10
+```
+
+`--no-camera` is refused here rather than warned about: the gate is red, and
+geometry cannot infer red from position.
+
+### Reading the log
+
+Every `drive_corridor.py` field, plus `topo_state`, `turn`, `route_index`,
+`gate_live`, `gate_range_m`, `gate_gaps_m`, `branch_cones_dropped`,
+`blind_ticks` and `travelled_m`. Three of those answer the questions that
+actually come up after a bad run:
+
+- `gate_live` false for the whole approach means the triple was never recovered
+  — a layout problem, not a control one. Check the spacing near the reds.
+- `branch_cones_dropped` staying at 0 through `traverse` means the branch filter
+  never bit, so the car was choosing its own branch.
+- `travelled_m` is an open-loop guess from commanded duty
+  (`speed_ctrl.DUTY_TO_MPS`, which was fitted to nothing). It is the floor for
+  deciding a gate is behind the car. If manoeuvres end early or late on the
+  track, this is the number to fix — and the VESC encoder is the way to fix it.
+
+### Simulate it first
+
+```sh
+python -m sim.drive_sim --track junction-left  --route data/routes/junction_left.txt
+python -m sim.drive_sim --track junction-right --route data/routes/junction_right.txt
+```
+
+`pytest sim` runs the closed-loop versions of those, including the one that
+matters: the same track driven with the *wrong* route, which must fail. Without
+it, a run that merely follows the longer branch looks like success.

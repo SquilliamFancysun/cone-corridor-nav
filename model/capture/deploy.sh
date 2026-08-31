@@ -59,6 +59,12 @@ for pkg in cone_perception cone_nav; do
     "$REPO/ros2/src/$pkg/$pkg/" "$HOST:cone_capture_tool/$pkg/"
 done
 
+# drive_junction.py is useless without a route file, and routes live in the
+# repo's data/ tree rather than in this directory. Same reasoning as the two
+# packages above: copied so there is one source of truth, and landed beside the
+# tool so `--route routes/route_v1.txt` works from where the car runs it.
+rsync -av "$REPO/data/routes/" "$HOST:cone_capture_tool/routes/"
+
 scp "$HERE/myconfig_capture.py" "$HOST:mycar/"
 
 echo

@@ -248,6 +248,29 @@ how little else they disturb:
 `track_v1(dead_end_length_m=1.5)` to generate the track exactly as written above
 and watch the boundary go ambiguous.
 
+## Superseded at the junctions: see `junction_v2.md`
+
+The two Y-junctions above are laid as **single-origin forks** — both branches
+leaving one point, with a red PAIR as a landmark 1 m before it. The car does not
+drive that shape well, and the reason is in the arithmetic this document already
+contains. Two branches leaving one point have inner walls on the wrong sides of
+each other until `half_width / tan(divergence)` past the junction, so through
+that whole stretch the routed branch has an outer wall but no blue/yellow
+*pair*, hence no corridor midpoint — and `speed_ctrl` stops the car when the
+driven line reaches under 1 m ahead.
+
+`data/layouts/junction_v2.md` replaces it with a **staggered fork**: three red
+cones instead of two, and each branch starting at its own gate midpoint rather
+than at the junction centre. The centre red cone becomes the island nose, so the
+divider is physical and at the junction rather than inferred 1.78 m downstream.
+The first exit pair moves from 2.06 m past the red line to 0.75 m, and the
+measured minimum reach through the mouth is 1.82 m against the 1.0 m floor.
+
+Build junctions from `junction_v2.md`. The corridor segments, colours, cone
+height, spacing and survey procedure in this document are unchanged and still
+apply — **except** for the advice to densify through a fork, which is wrong at a
+v2 junction and is corrected there.
+
 ## Known consequence for the nav stack
 
 A fork buys continuous visibility at the cost of *ambiguity*. Approaching a Y,
@@ -259,3 +282,10 @@ That is what the red gate pair is for. `EVENT_GATE_IN_RANGE` is the trigger to
 hand off from centerline-following to `cone_nav/guidance/junction_exec.py`, which
 uses the provided route to pick which branch's cones to keep. Write the corridor
 layer knowing it will sometimes see two corridors, not one.
+
+**Update.** That is what junction v2 does, with one change: the trigger is not
+`EVENT_GATE_IN_RANGE` at a red pair but a whole red *triple*, and the handoff is
+not to a separate manoeuvre. `cone_nav/guidance/junction_exec.py` filters the
+cone list to the routed branch and hands it to the same `centerline` the
+corridor uses, so there is no second control stack to hand off to. See
+`junction_v2.md`.

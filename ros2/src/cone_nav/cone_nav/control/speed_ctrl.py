@@ -31,6 +31,17 @@ from cone_nav.control.pure_pursuit import clamp
 # VESC_MAX_SPEED_PERCENT of 0.2, because that number is the ceiling for a human
 # holding a controller who can see the whole track, and this is a first
 # autonomous run alongside a person walking.
+# Duty cycle -> metres per second. A GUESS, and the least trustworthy number in
+# the stack -- it was fitted to nothing. It lives here rather than in the sim
+# because `drive_junction.py` needs it too: `topo_state` uses travelled distance
+# as the floor for deciding a junction is behind the car, and a constant the car
+# and the sim disagreed about would mean a manoeuvre tuned in one and run in the
+# other. Used only as a rough monotone estimate, never as a measurement.
+#
+# `myconfig_capture.py` sets VESC_HAS_SENSOR = True and nothing reads the
+# encoder yet. That is where this should come from once something does.
+DUTY_TO_MPS = 12.0
+
 DEFAULT_MAX_DUTY = 0.10
 
 # Below this the motor cogs instead of turning. See the module docstring.

@@ -374,9 +374,14 @@ def require_vehicle_geometry():
             "       Then re-run deploy.sh.")
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Autonomous cone-corridor following.")
+def build_parser(description="Autonomous cone-corridor following."):
+    """Every argument the two driving scripts share.
+
+    Split out of `parse_args` so `drive_junction.py` can add `--route` to the
+    same parser rather than restating twenty-five options that must stay in
+    step with these. Pure refactor: `parse_args` below is what it always was.
+    """
+    parser = argparse.ArgumentParser(description=description)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true",
                       help="compute and log everything; never open the VESC")
@@ -436,12 +441,21 @@ def parse_args(argv=None):
     parser.add_argument("--log", default=None,
                         help="path for the per-tick JSONL trial log")
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def finalise_args(parser, args):
+    """The mode derivation and the refusals, shared with drive_junction.py."""
     args.mode = ("dry-run" if args.dry_run else
                  "steer-only" if args.steer_only else "drive")
     if args.no_deadman and not args.dry_run:
         parser.error("--no-deadman is only allowed with --dry-run")
     return args
+
+
+def parse_args(argv=None):
+    parser = build_parser()
+    return finalise_args(parser, parser.parse_args(argv))
 
 
 def announce(args, record, intr, detector_name):

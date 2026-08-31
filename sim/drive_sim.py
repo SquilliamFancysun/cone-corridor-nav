@@ -33,6 +33,9 @@ import math
 import sys
 
 from cone_nav.control import pure_pursuit, speed_ctrl
+from cone_nav.guidance import junction_exec
+from cone_nav.guidance.route_exec import RouteCursor, load_route
+from cone_nav.topology import gate_detect, topo_state
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_perception import clustering, fusion
@@ -57,13 +60,9 @@ CLASS_IDS = {name: i for i, name in enumerate(CLASS_NAMES)}
 # The preview the detector actually runs on, from capture_cones.py.
 PREVIEW_W, PREVIEW_H = 416, 234
 
-# Duty cycle -> metres per second. A GUESS, and the least trustworthy number
-# here: `set_duty_cycle` is open loop, so the real ratio moves with battery
-# charge and surface. It sets how far the car travels per control tick, so it
-# scales how much steering authority the loop appears to have -- which is why
-# the sim can say "this lookahead weaves" but cannot say "this lookahead weaves
-# at 0.8 m/s". Replace it with a measurement once the car has driven.
-DUTY_TO_MPS = 12.0
+# Duty cycle -> metres per second. Imported rather than kept here, so the sim
+# and drive_junction.py cannot disagree about how far the car thinks it went.
+DUTY_TO_MPS = speed_ctrl.DUTY_TO_MPS
 
 # Half the car's width plus a cone's base radius. Closer than this and the car
 # has hit the cone.
@@ -148,7 +147,7 @@ class Tick(object):
 
     __slots__ = ("t", "x", "y", "heading_deg", "cones", "labeled", "filled",
                  "centerline_points", "reach_m", "delta_rad", "duty", "reason",
-                 "fallback")
+                 "fallback", "topo", "turn", "dropped", "gate_range_m")
 
     def __init__(self, **kw):
         for slot in self.__slots__:
@@ -182,7 +181,8 @@ class SimResult(object):
                 f"{self.cones_passed}/{self.cone_total} cones passed)")
 
 
-def layout_centerline(layout, width_tolerance=0.4):
+def layout_centerline(layout, width_tolerance=0.4,
+                      exclude_prefixes=("dead_end",)):
     """The true centerline of a synthetic track, for scoring against.
 
     Each blue cone is paired with its nearest yellow, and the pair's midpoint is
@@ -193,6 +193,13 @@ def layout_centerline(layout, width_tolerance=0.4):
     and it is what makes cross-track error mean anything. The car never sees it.
     """
     from sim.cone_field import CORRIDOR_WIDTH_M
+    # The ordering walk below is nearest-unvisited, which at a fork happily
+    # wanders up the dead end and then jumps across to the routed branch. A
+    # stub is by definition not on the ideal path, so drop it before pairing
+    # rather than trying to untangle the walk afterwards.
+    layout = [c for c in layout
+              if not any(str(c.segment).startswith(pre)
+                         for pre in exclude_prefixes)]
     blues = [c for c in layout if c.color == "blue"]
     yellows = [c for c in layout if c.color == "yellow"]
     points = []
@@ -263,17 +270,28 @@ def observe(layout, pose, intr, dropout=(), seed=None, detector_hfov=None):
 
 
 def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
-             reference_heading_rad=0.0, fill_in_fov=False):
+             reference_heading_rad=0.0, fill_in_fov=False,
+             topo=None, previous_line=None, travel_m=0.0,
+             yaw_delta_rad=0.0):
     """The production perception path, exactly as `fusion_view.pipeline_once`.
 
     Kept as its own function so a divergence between the sim and the car is a
     diff between two short functions rather than something to be discovered on
     the track.
 
-    Returns `(fusion_result, cones, line, filled)` -- `cones` separately from
-    `fusion_result.cones` because after the fill they are no longer the same
-    list, and a status panel reading `result.matched` alongside a centerline
-    built from filled cones would overstate what the camera did.
+    Returns `(fusion_result, cones, line, filled, corridor_line, dropped)`.
+    `cones` is separate from `fusion_result.cones` because after the fill they
+    are no longer the same list, and a status panel reading `result.matched`
+    alongside a centerline built from filled cones would overstate what the
+    camera did.
+
+    `corridor_line` is the line BEFORE the gate anchor is threaded in. It is
+    what `topo_state` reads next tick to decide whether the corridor has been
+    reacquired, and the anchored line cannot answer that -- the anchor
+    guarantees two points whether or not the car can see a corridor.
+
+    Passing `topo` turns on junction handling. That is the whole of it: three
+    steps around the same `centerline` call the plain corridor uses.
     """
     candidates = clustering.cone_candidates(scan, IDENTITY_CALIBRATION)
     result = fusion.associate(candidates, detections, intr,
@@ -283,7 +301,25 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
         cones, filled = fill_unlabeled(
             cones, reference_heading_rad=reference_heading_rad,
             fill_in_fov=fill_in_fov)
-    return result, cones, centerline(cones, car_xy=(0.0, 0.0)), filled
+
+    gate_xy, dropped = None, 0
+    if topo is not None:
+        junction = gate_detect.detect(cones, axis_rad=reference_heading_rad)
+        topo.update(junction, previous_line, travel_m=travel_m,
+                    yaw_delta_rad=yaw_delta_rad)
+        if topo.engaged and topo.junction is not None:
+            gate_xy, _divider = junction_exec.select(topo.junction, topo.turn)
+            # The divider and axis come from the machine, not from the latched
+            # junction: while the reds are out of frame those are carried
+            # forward with the car's motion and the latched pair are stale.
+            cones, dropped = junction_exec.keep_branch(
+                cones, topo.divider_xy, topo.axis_rad, topo.turn)
+
+    corridor_line = centerline(cones, car_xy=(0.0, 0.0))
+    line = corridor_line
+    if topo is not None and topo.anchor_ok and gate_xy is not None:
+        line = junction_exec.junction_line(corridor_line, gate_xy)
+    return result, cones, line, filled, corridor_line, dropped
 
 
 def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
@@ -291,10 +327,21 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
              dropout=(), seed=None, start=None, stall_ticks=20,
              detection_age_s=0.0, fill_sides=True,
              latency_ticks=DEFAULT_LATENCY_TICKS, servo_tau_s=SERVO_TAU_S,
-             fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW):
-    """Drive the layout. Returns a SimResult; never raises on a bad run."""
+             fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW,
+             route=None):
+    """Drive the layout. Returns a SimResult; never raises on a bad run.
+
+    `route` is a list of turns; passing one turns on junction handling with the
+    same `TopoState` and `RouteCursor` `drive_junction.py` uses, so a gain tuned
+    here is tuned against the code the car runs.
+    """
     intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
+
+    topo = topo_state.TopoState(RouteCursor(route)) if route else None
+    previous_line = None
+    last_travel = 0.0
+    last_yaw = 0.0
 
     ticks = []
     axis_rad = 0.0
@@ -321,9 +368,12 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         pose = vehicle.base_pose()
         scan, detections = observe(layout, pose, intr, dropout=dropout,
                                    seed=seed)
-        result, cones, line, filled = pipeline(
+        result, cones, line, filled, corridor_line, dropped = pipeline(
             scan, detections, intr, detection_age_s, fill_sides=fill_sides,
-            reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov)
+            reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov,
+            topo=topo, previous_line=previous_line, travel_m=last_travel,
+            yaw_delta_rad=last_yaw)
+        previous_line = corridor_line
         # The corridor the car is in rotates relative to the car through a
         # bend, so the side split follows last frame's line rather than
         # assuming the corridor runs straight ahead forever.
@@ -356,11 +406,21 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
             cones=len(cones), labeled=result.matched, filled=filled,
             centerline_points=len(line.points),
             reach_m=target.reach_m, delta_rad=delta, duty=duty_now,
-            reason=target.reason, fallback=bool(line.single_boundary_fallback)))
+            reason=target.reason, fallback=bool(line.single_boundary_fallback),
+            topo=topo.state if topo else "", turn=topo.turn if topo else "",
+            dropped=dropped,
+            gate_range_m=(topo.junction.range_for(topo.turn)
+                          if topo and topo.junction and topo.turn else 0.0)))
 
         speed = duty_now * DUTY_TO_MPS
+        heading_before = vehicle.heading_rad
         vehicle.step(delta, speed, DT_S)
-        distance += speed * DT_S
+        last_yaw = vehicle.heading_rad - heading_before
+        # What topo_state will be told next tick. The same duty-cycle estimate
+        # drive_junction.py has to use, so the state machine is exercised
+        # against the quality of information it will really get.
+        last_travel = speed * DT_S
+        distance += last_travel
 
         hit = _strike(vehicle, layout)
         if hit is not None:
@@ -433,10 +493,15 @@ def build_track(name, spacing=DEFAULT_SPACING_M):
                                           spacing=spacing)
     if name == "track_v1":
         return cone_field.track_v1()
+    if name == "junction-left":
+        return cone_field.track_junction("left", spacing=spacing)
+    if name == "junction-right":
+        return cone_field.track_junction("right", spacing=spacing)
     raise SystemExit(f"unknown track {name!r}")
 
 
-TRACKS = ("straight", "curve", "curve-right", "s-bend", "track_v1")
+TRACKS = ("straight", "curve", "curve-right", "s-bend", "track_v1",
+          "junction-left", "junction-right")
 
 
 # --- reporting ----------------------------------------------------------
@@ -531,12 +596,21 @@ def main(argv=None):
     parser.add_argument("--no-camera-fill", action="store_true",
                         help="disable geometric side assignment for the near "
                              "cones the camera cannot see")
+    parser.add_argument("--route", default=None,
+                        help="path to a route file (see data/routes/). Turns "
+                             "on junction handling; required for a junction "
+                             "track and meaningless without one")
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args(argv)
 
     layout = build_track(args.track, args.spacing)
     dropout = tuple(c.strip() for c in args.dropout.split(",") if c.strip())
     axle = (args.rear_axle_x, 0.0, 0.0)
+    route = load_route(args.route) if args.route else None
+    if args.track.startswith("junction-") and route is None:
+        raise SystemExit("error: a junction track needs --route. Without one "
+                         "the car has no way to choose a branch.\n"
+                         "       try --route data/routes/route_v1.txt")
 
     if args.sweep_lookahead:
         print(f"{'lookahead':>10}  {'outcome':<28} {'dist':>6}  "
@@ -547,7 +621,7 @@ def main(argv=None):
                            dropout=dropout, seed=args.seed,
                            fill_sides=not args.no_camera_fill,
                            latency_ticks=args.latency_ticks,
-                           servo_tau_s=args.servo_tau)
+                           servo_tau_s=args.servo_tau, route=route)
             print(f"{lookahead:>10.1f}  {res.outcome:<28} "
                   f"{res.distance_m:>5.1f}m  "
                   f"{res.mean_xtrack_m * 100:>10.1f}cm  "
@@ -560,7 +634,7 @@ def main(argv=None):
                       dropout=dropout, seed=args.seed,
                       fill_sides=not args.no_camera_fill,
                       latency_ticks=args.latency_ticks,
-                      servo_tau_s=args.servo_tau)
+                      servo_tau_s=args.servo_tau, route=route)
     print(f"track {args.track}, {len(layout)} cones, "
           f"lookahead {args.lookahead} m, max duty {args.max_duty}\n")
     print(summarise(result))

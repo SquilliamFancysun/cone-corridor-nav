@@ -1,0 +1,2 @@
+# Single junction, routed right. Pairs with `--track junction-right`.
+right
