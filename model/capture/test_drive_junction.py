@@ -93,6 +93,15 @@ def test_status_of_reports_the_manoeuvre():
         drive_junction.JUNCTION_STATUS_SCHEMA["properties"])
 
 
+def test_reds_seen_is_reported_even_when_there_is_no_triple():
+    """The two ways stage 3 finds nothing -- no red detected at all, versus
+    two of three recovered -- are different problems with different fixes, and
+    a log that only records whole triples cannot tell them apart."""
+    record = drive_junction.status_of({"duty": 0.0}, None, None, 0, reds_seen=2)
+    assert record["reds_seen"] == 2
+    assert record["gate_live"] is False
+
+
 def test_status_of_survives_having_no_state_machine():
     record = drive_junction.status_of({"duty": 0.0}, None, None, 0)
     assert record["topo_state"] == ""
@@ -140,8 +149,9 @@ def test_the_pipeline_arms_the_machine_on_a_junction():
     out = drive_junction.drive_pipeline(
         scan, Set(detections), cone_field.IDENTITY_CALIBRATION, intr, Args(),
         0.0, topo=topo)
-    junction = out[7]
+    junction, reds_seen = out[7], out[9]
     assert junction is not None, "the triple was not detected"
+    assert reds_seen == 3
     assert topo.state == topo_state.APPROACH
     assert junction.gaps_m[0] == pytest.approx(
         cone_field.JUNCTION_GATE_GAP_M, abs=0.15)

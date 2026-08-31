@@ -57,6 +57,7 @@ import oakd
 from cone_nav.control import pure_pursuit, speed_ctrl
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
+from cone_nav.corridor.boundary_split import split
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_nav.guidance import junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
@@ -87,6 +88,7 @@ JUNCTION_STATUS_SCHEMA = {
         route_index={"type": "integer", "description": "junctions consumed"},
         route_remaining={"type": "integer"},
         gate_live={"type": "boolean", "description": "a whole triple seen THIS tick"},
+        reds_seen={"type": "integer", "description": "red cones in arm range, whether or not they formed a triple"},
         gate_range_m={"type": "number", "description": "to the chosen gate midpoint"},
         gate_gaps_m={"type": "string", "description": "the two measured gate widths"},
         branch_cones_dropped={"type": "integer"},
@@ -127,6 +129,12 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
 
     cones, filled = result.cones, 0
     junction = gate_detect.detect(result.cones, axis_rad=axis_rad)
+    # Counted separately from `junction`, because "saw two reds and one merged
+    # into a branch cone" and "saw no red at all" are different problems with
+    # different fixes, and a log that only records whole triples cannot tell
+    # them apart. This is the first number to read when stage 3 finds nothing.
+    reds_seen = sum(1 for c in split(result.cones).gates
+                    if math.hypot(c.x, c.y) <= gate_detect.GATE_ARM_RANGE_M)
     if topo is not None:
         topo.update(junction, previous_line, travel_m=travel_m,
                     yaw_delta_rad=yaw_delta_rad)
@@ -164,10 +172,10 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                                           extrinsics.WHEELBASE_M, origin=axle)
     duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
-            junction, dropped)
+            junction, dropped, reds_seen)
 
 
-def status_of(base, topo, junction, dropped):
+def status_of(base, topo, junction, dropped, reds_seen=0):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
     live = topo.live if topo else None
@@ -181,6 +189,7 @@ def status_of(base, topo, junction, dropped):
         route_index=topo.cursor.index if topo else 0,
         route_remaining=topo.cursor.remaining if topo else 0,
         gate_live=live is not None,
+        reds_seen=reds_seen,
         gate_range_m=round(topo.junction.range_for(turn), 3)
         if topo and topo.junction is not None and turn else 0.0,
         gate_gaps_m=gaps,
@@ -318,7 +327,7 @@ def main(argv=None):
 
             detection_set = detector_thread.latest()
             (result, cones, filled, line, pursuit, duty, corridor_line,
-             junction, dropped) = drive_pipeline(
+             junction, dropped, reds_seen) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
                 yaw_delta_rad=yaw_delta_rad)
@@ -360,7 +369,7 @@ def main(argv=None):
                 result, cones, filled, line, pursuit, duty, servo, armed, args,
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
-            status = status_of(base, topo, junction, dropped)
+            status = status_of(base, topo, junction, dropped, reds_seen)
 
             wall = time.time()
             if sinks.available:
@@ -398,7 +407,7 @@ def main(argv=None):
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
-                      f"{topo.state}"
+                      f"{topo.state} reds {reds_seen}/3"
                       + (f"/{topo.turn}" if topo.engaged else "")
                       + (f"  [{duty.reason}]" if duty.reason else ""))
     except KeyboardInterrupt:

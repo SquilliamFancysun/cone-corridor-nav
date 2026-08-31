@@ -45,6 +45,27 @@ def mark(ok):
     return "OK   " if ok else "CHECK"
 
 
+def _diagnose_reds(best):
+    """What a missing triple means depends on how many reds were seen at all.
+
+    Without this the two failures look identical in the log and they have
+    nothing to do with each other.
+    """
+    if best == 0:
+        return ("          ZERO reds at any point. The detector is not calling\n"
+                "          red at all -- wrong weights, or the cones read as\n"
+                "          orange. Check with detect_view.py before touching\n"
+                "          the track.")
+    if best < 3:
+        return ("          Reds ARE detected but never all three at once. One\n"
+                "          cone is merging with a neighbour in the lidar or\n"
+                "          leaving frame early: check the 0.4 m clear band\n"
+                "          around each red, and that the gaps are not > 1.40 m.")
+    return ("          All three were seen together, but the gaps failed\n"
+            "          gate_detect's window. Measure both gaps -- they must be\n"
+            "          inside 0.6-2.5 m, and the span must exceed 2.5 m.")
+
+
 def gaps_of(rows):
     out = []
     for row in rows:
@@ -92,9 +113,14 @@ def report(rows, path):
         print(f"    ..... last  seen at gate {last.get('gate_range_m', 0):.2f} m"
               f"          expect ~{EXPECT_LAST_SEEN_M:.2f}")
     else:
-        print("    ..... the triple was NEVER recovered. This is a layout")
-        print("          problem, not a control one -- check the gate gaps and")
-        print("          that no boundary cone is within 0.4 m of a red.")
+        print("    ..... the triple was NEVER recovered.")
+    if not live or any("reds_seen" in r for r in rows):
+        best = max((r.get("reds_seen", 0) for r in rows), default=0)
+        held = sum(1 for r in rows if r.get("reds_seen", 0) >= 3)
+        print(f"    ..... most reds seen at once {best}/3, on {held} tick(s) "
+              "all three")
+        if not live:
+            print(_diagnose_reds(best))
 
     pairs = gaps_of(live)
     print()
