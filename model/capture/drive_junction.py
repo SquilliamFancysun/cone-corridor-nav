@@ -112,6 +112,7 @@ JUNCTION_STATUS_SCHEMA = {
         goal_range_m={"type": "number", "description": "to the goal, measured if seen this tick else carried"},
         goal_reason={"type": "string", "description": "why no goal was accepted this tick"},
         goal_offset_m={"type": "number", "description": "the candidate's offset from the corridor axis"},
+        goal_bearing_deg={"type": "number", "description": "bearing to the nearest magenta in the CAR frame, left positive. Disagreeing with goal_offset_m is the signature of a bad axis"},
         magenta_in_view={"type": "integer", "description": "magenta cones at ANY range"},
         goal_armed={"type": "boolean", "description": "the route is spent, so a goal may stop the car"},
         goal_blind_ticks={"type": "integer", "description": "ticks the goal has been carried rather than seen"},
@@ -171,7 +172,12 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     # only ever paints blue and yellow so it cannot invent a goal, but
     # `keep_branch` can DELETE one, and a goal read after it would silently
     # depend on which way the route happened to turn.
-    goal_survey = goal_detect.survey(cones, axis_rad=axis_rad)
+    # NOT `axis_rad`. It is a one-tick feedback that holds its last value when
+    # the centerline dies, and at the goal the centerline always dies -- which on
+    # 2026-09-01 froze it 50-64 deg wrong and refused 26 ticks of a clean
+    # approach. See goal_detect.trusted_axis.
+    goal_survey = goal_detect.survey(
+        cones, axis_rad=goal_detect.trusted_axis(previous_line, axis_rad))
     if goal_latch is not None:
         goal_latch.update(goal_survey.goal, goal_armed, travel_m=travel_m,
                           yaw_delta_rad=yaw_delta_rad)
@@ -268,6 +274,9 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         goal_offset_m=(round(goal_survey.offset_m, 3)
                        if goal_survey and goal_survey.offset_m is not None
                        else 0.0),
+        goal_bearing_deg=(round(goal_survey.bearing_deg, 1)
+                          if goal_survey and goal_survey.bearing_deg is not None
+                          else 0.0),
         magenta_in_view=len(goal_survey.magenta) if goal_survey else 0,
         goal_armed=bool(goal_armed),
         goal_blind_ticks=goal_latch.blind_ticks if goal_latch else 0,

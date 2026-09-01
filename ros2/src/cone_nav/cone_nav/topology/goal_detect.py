@@ -31,6 +31,26 @@ One guard deliberately does NOT live here, because it is not geometry:
 `drive_junction.py` arms the stop only once the route is spent, so a magenta
 glimpsed at the first junction is never offered to this module at all.
 
+## Which axis the offset is measured against, which is not a detail
+
+The off-axis test needs a corridor direction, and at the goal there is no longer
+a corridor to take one from -- that is what being at the goal MEANS. Measured on
+the car 2026-09-01 (`goal-dry.jsonl`): the centerline emptied 1.1 m out, so
+`side_assign.heading_of` fell back to its `default` and `axis_rad` froze at a
+value taken off a two-point single-boundary fallback. It was wrong by 50-64
+degrees, and 26 ticks of a clean approach were refused OFF_AXIS for a trophy the
+camera was labelling at the time -- which it could only do with the trophy inside
+its 34.5 degree half-frame, so the offset and the frame could not both be right.
+
+The cost was not the refusals themselves. The offset shrinks with range, so the
+goal was finally accepted at 0.49 m and the stop would likely still have fired;
+what was lost was the margin. The run-in is meant to begin at `RUN_IN_M` = 1.0 m
+and began at 0.45 m, because confirmation could not complete until the error had
+shrunk out of the way.
+
+So `trusted_axis` below decides what to hand this module, and a stale heading is
+not it.
+
 ## Why `survey` exists and `detect` is written in terms of it
 
 Copied from `gate_detect`, and for its reason. "No goal this tick" has four
@@ -44,6 +64,7 @@ produced by the same code path as the decision and cannot drift from it.
 import math
 
 from cone_nav.corridor.boundary_split import split
+from cone_nav.topology.topo_state import corridor_reacquired
 
 # Past this the lidar cannot range a cone honestly -- see the module docstring.
 # The same value and the same reason as `gate_detect.GATE_ARM_RANGE_M`; they are
@@ -100,6 +121,20 @@ class GoalSurvey(object):
             return None
         return math.hypot(self.goal.x, self.goal.y)
 
+    @property
+    def bearing_deg(self):
+        """Bearing to the nearest magenta in the CAR's frame, left positive.
+
+        Logged beside `offset_m` because the two disagreeing is the signature of
+        a bad axis, and on 2026-09-01 that had to be inferred from range and
+        offset after the fact instead of read off a column.
+        """
+        cone = self.goal or (self.in_arm[0] if self.in_arm else
+                             (self.magenta[0] if self.magenta else None))
+        if cone is None:
+            return None
+        return math.degrees(math.atan2(cone.y, cone.x))
+
     def __repr__(self):
         where = ("%.2f m" % self.range_m) if self.goal is not None else "-"
         return (f"GoalSurvey({len(self.in_arm)}/{len(self.magenta)} in range, "
@@ -116,6 +151,28 @@ def _offset(cone, axis_rad):
     copies of one line with this comment on each.
     """
     return -cone.x * math.sin(axis_rad) + cone.y * math.cos(axis_rad)
+
+
+def trusted_axis(corridor_line, axis_rad):
+    """The axis to measure a goal's offset against: the corridor's, or the car's.
+
+    `axis_rad` is a one-tick feedback off the previous centerline, and
+    `heading_of` holds its last value when that line dies rather than admitting
+    it has none. Near the goal the line dies every time, so the fed-back heading
+    is stale exactly where this module is asked to trust it -- see the module
+    docstring for what that cost on the car.
+
+    The predicate is `topo_state.corridor_reacquired`, reused rather than
+    restated: it already means "this line is evidence of a real two-sided
+    corridor", already refuses a single-boundary fallback, and is already tested.
+
+    Falling back to the car's own frame is sound rather than merely safe. The
+    test is a LATERAL offset, and a boundary cone sits about 0.75 m off the
+    centre whatever the range; a car that has just driven down the corridor is
+    aligned with it, so 0.50 m still separates a goal from a wall. It is the one
+    frame that needs no estimate to be right.
+    """
+    return axis_rad if corridor_reacquired(corridor_line) else 0.0
 
 
 def survey(cones, axis_rad=0.0, arm_range_m=GOAL_ARM_RANGE_M,

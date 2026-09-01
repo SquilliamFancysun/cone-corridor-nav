@@ -20,6 +20,7 @@ from cone_nav.topology.goal_detect import (
     OFF_AXIS,
     detect,
     survey,
+    trusted_axis,
 )
 from cone_perception.cone_classes import (
     CLASS_BLUE,
@@ -147,3 +148,73 @@ def test_detect_is_the_surveys_decision():
     for cones in ([], [cone(2.0, 0.0)], [cone(2.0, 1.5)],
                   [cone(2.0, 0.0), cone(1.0, 0.0)]):
         assert detect(cones) is survey(cones).goal
+
+
+# --- which axis the offset is measured against --------------------------
+
+class FakeLine(object):
+    """Stands in for CenterlineResult -- only what `corridor_reacquired` reads."""
+
+    def __init__(self, points, single_boundary_fallback=False):
+        self.points = points
+        self.single_boundary_fallback = single_boundary_fallback
+
+
+def corridor_line(n=4):
+    return FakeLine([(x * 0.5, 0.0) for x in range(1, n + 1)])
+
+
+def test_a_real_corridor_supplies_the_axis():
+    axis = math.radians(20.0)
+    assert trusted_axis(corridor_line(), axis) == axis
+
+
+def test_no_corridor_falls_back_to_the_car_frame():
+    """`heading_of` holds its last value when the line dies rather than
+    admitting it has none, so the fed-back axis is stale, not absent."""
+    assert trusted_axis(None, math.radians(60.0)) == 0.0
+    assert trusted_axis(FakeLine([]), math.radians(60.0)) == 0.0
+    assert trusted_axis(FakeLine([(1.0, 0.0)]), math.radians(60.0)) == 0.0
+
+
+def test_a_single_boundary_fallback_does_not_supply_the_axis():
+    """The exact source of the bad heading on 2026-09-01: a two-point fallback
+    line, whose direction is inferred from one wall rather than measured between
+    two."""
+    line = FakeLine([(1.0, 0.0), (2.0, 0.0)], single_boundary_fallback=True)
+    assert trusted_axis(line, math.radians(60.0)) == 0.0
+
+
+def test_a_stale_axis_does_not_refuse_a_goal_dead_ahead():
+    """The track regression, from `goal-dry.jsonl` 2026-09-01.
+
+    The centerline emptied 1.1 m out, `axis_rad` froze around 60 deg off, and a
+    trophy the camera was labelling -- so, inside its 34.5 deg half-frame -- was
+    refused OFF_AXIS for 26 ticks of the approach. Confirmation could not
+    complete until the error had shrunk with the range, so the run-in began at
+    0.45 m instead of 1.0 m and almost all of its margin was gone.
+    """
+    goal = cone(1.1, 0.0)
+    stale = math.radians(60.0)
+
+    # What the car did: measured against the frozen heading, refused.
+    assert survey([goal], axis_rad=stale).reason == OFF_AXIS
+    # What it does now: no corridor, so the car's own frame decides.
+    assert detect([goal], axis_rad=trusted_axis(None, stale)) is not None
+
+
+def test_the_corridor_axis_still_wins_when_there_is_a_corridor():
+    """The fallback must not cost the mid-bend case the axis argument exists
+    for: a goal centered on a corridor the car meets at an angle."""
+    axis = math.radians(20.0)
+    at = (2.0 * math.cos(axis), 2.0 * math.sin(axis))
+    assert detect([cone(*at)], axis_rad=trusted_axis(corridor_line(), axis))
+
+
+def test_the_bearing_is_reported_beside_the_offset():
+    """The two disagreeing is the signature of a bad axis, and inferring the
+    bearing from range and offset after the fact is what this column spares."""
+    got = survey([cone(2.0, 0.0)], axis_rad=math.radians(60.0))
+    assert got.reason == OFF_AXIS
+    assert got.offset_m == pytest.approx(-1.73, abs=0.01)
+    assert got.bearing_deg == pytest.approx(0.0, abs=0.01)

@@ -333,7 +333,12 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     # The fill only ever paints blue and yellow, so it cannot invent a goal --
     # but keep_branch can DELETE one, and a goal read after it would silently
     # depend on which way the route happened to turn.
-    goal_survey = goal_detect.survey(cones, axis_rad=reference_heading_rad)
+    # NOT `reference_heading_rad` -- see goal_detect.trusted_axis. That feedback
+    # holds its last value once the centerline dies, and the centerline always
+    # dies at the goal.
+    goal_survey = goal_detect.survey(
+        cones,
+        axis_rad=goal_detect.trusted_axis(previous_line, reference_heading_rad))
     if goal_latch is not None:
         goal_latch.update(goal_survey.goal, goal_armed, travel_m=travel_m,
                           yaw_delta_rad=yaw_delta_rad)
