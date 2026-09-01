@@ -473,6 +473,9 @@ def main(argv=None):
                     reds += f"  [{survey.reason}]"
                 health = drive_corridor.camera_health(
                     detection_age, args.max_detection_age)
+                health = " / ".join(
+                    t for t in (health, drive_corridor.pad_health(deadman))
+                    if t)
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "

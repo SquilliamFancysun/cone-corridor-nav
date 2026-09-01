@@ -311,3 +311,22 @@ def test_a_dead_detector_is_named_on_the_bench_line():
     assert drive_corridor.camera_health(2.0, 0.3) == ""          # startup grace
     assert "STALE 41s" in drive_corridor.camera_health(41.2, 0.3)
     assert "NO FRAMES" in drive_corridor.camera_health(float("inf"), 0.3)
+
+
+def test_a_lost_pad_is_named_on_the_bench_line():
+    """An over-current trip re-enumerates the F710 as a new device while the
+    tool holds the dead one, so every press reads 'not held' -- safely, and
+    silently. The tag turns the silence into an instruction."""
+    class Stick:
+        connected = True
+
+    class DM:
+        present = True
+        joystick = Stick()
+
+    dm = DM()
+    assert drive_corridor.pad_health(dm) == ""
+    dm.joystick.connected = False
+    assert "PAD LOST" in drive_corridor.pad_health(dm)
+    assert "restart" in drive_corridor.pad_health(dm)
+    assert drive_corridor.pad_health(None) == ""

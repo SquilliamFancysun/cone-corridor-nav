@@ -380,6 +380,24 @@ def status_of(result, cones, filled, line, pursuit, duty, servo, armed, args,
     }
 
 
+def pad_health(deadman):
+    """The bench-line tag for a deadman pad that died mid-run.
+
+    A USB over-current trip disconnects the F710 along with everything else,
+    and it re-enumerates as a NEW input device -- the running tool still holds
+    the dead one, so every press after that moment reads as 'not held'. That
+    is the safe reading and the silent one: the operator stands there pressing
+    X at a line that says 'idle'. Observed on the track 2026-09-01. The pad
+    cannot be reacquired mid-run (the fd is gone); the fix is a restart, and
+    the tag says so.
+    """
+    if deadman is None or not deadman.present or deadman.joystick is None:
+        return ""
+    if deadman.joystick.connected:
+        return ""
+    return "PAD LOST -- X does nothing; restart the tool"
+
+
 def camera_health(detection_age_s, max_age_s, grace_s=3.0):
     """The bench-line tag for a detector that has stopped producing.
 
@@ -669,6 +687,8 @@ def main(argv=None):
                 flag = "ARMED " if armed else "idle  "
                 health = camera_health(detection_age,
                                        args.max_detection_age)
+                health = " / ".join(t for t in (health, pad_health(deadman))
+                                    if t)
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
