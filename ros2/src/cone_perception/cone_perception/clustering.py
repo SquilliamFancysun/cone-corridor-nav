@@ -59,6 +59,15 @@ MIN_CONE_WIDTH_M = 0.02
 # whole far wall in as candidates.
 MAX_CONE_RANGE_M = 5.0
 
+# ...and nothing nearer than this is a cone either -- it is the car. The
+# chassis arc mask leaks on the revolutions where the arc was not measured
+# (presence 0.925 in calibration.json), and a leaked chassis return clusters
+# into a phantom centimetres from the lidar. Observed labelled RED on the
+# track, where it completed a spurious triple and committed a junction
+# manoeuvre at a gate that did not exist. 0.20 m clears the measured chassis
+# returns (2-172 mm) and is closer than any cone the car has not already hit.
+MIN_CONE_RANGE_M = 0.20
+
 # Chassis arcs are measured to the degree; cones just outside one still catch
 # the odd body return. Widening the mask costs a sliver of real world in a
 # direction that is mostly car anyway.
@@ -235,7 +244,8 @@ class ConeCandidate(object):
 def cone_candidates(scan, calibration, max_range_m=MAX_CONE_RANGE_M,
                     min_points=2, max_width_m=MAX_CONE_WIDTH_M,
                     min_width_m=MIN_CONE_WIDTH_M,
-                    chassis_margin_deg=CHASSIS_MARGIN_DEG):
+                    chassis_margin_deg=CHASSIS_MARGIN_DEG,
+                    min_range_m=MIN_CONE_RANGE_M):
     """LD06 Scan -> ConeCandidate list in base_link.
 
     `calibration` is the dict calibrate.load() returns: `mirror`,
@@ -273,7 +283,7 @@ def cone_candidates(scan, calibration, max_range_m=MAX_CONE_RANGE_M,
     out = []
     for cluster in cluster_scan(angles, ranges, min_points=min_points):
         range_m = cluster.range_mm / 1000.0
-        if range_m > max_range_m:
+        if range_m > max_range_m or range_m < min_range_m:
             continue
         width_m = math.radians(cluster.width_deg) * range_m
         if width_m > max_width_m:

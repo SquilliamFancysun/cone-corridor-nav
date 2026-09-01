@@ -132,3 +132,23 @@ def test_width_is_reported_in_metres_at_the_measured_range():
     got = clustering.cone_candidates(scan, IDENTITY)[0]
     # 3.2 deg of object at 0.8 deg per step is five returns spanning 3.2 deg.
     assert got.width_m == pytest.approx(math.radians(3.2) * 2.0, abs=0.02)
+
+
+def test_a_cluster_at_the_lidar_is_the_car_not_a_cone():
+    """The chassis mask leaks on revolutions where the arc was not measured,
+    and the leaked returns cluster centimetres from the sensor. On the track
+    one such phantom took a red label and completed a spurious junction
+    triple. A cone cannot be nearer than the car's own bodywork."""
+    scan = scan_with([(0.0, 70, 3.0),        # 7 cm away: the car itself
+                      (30.0, 1500, 3.0)])    # a real cone at 1.5 m
+    cones = clustering.cone_candidates(scan, IDENTITY)
+    ranges = sorted(round(c.range_m, 2) for c in cones)
+    assert 0.07 not in ranges
+    assert 1.5 in ranges
+
+
+def test_min_range_is_below_the_near_blind_spot():
+    """The guard must reject the chassis, never a real cone: the nearest cone
+    the corridor layer ever acts on is the 0.75 m first-row spacing, and the
+    measured chassis returns end at 0.172 m."""
+    assert 0.172 < clustering.MIN_CONE_RANGE_M < 0.75
