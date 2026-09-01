@@ -262,6 +262,18 @@ def announce(args):
     turns = ", ".join(args.route_turns)
     print(f"route     {len(args.route_turns)} junction(s): {turns}")
     print(f"           from {args.route}")
+    if args.dry_run and args.no_deadman:
+        print(f"warning:  --no-deadman: travel is assumed at {args.push_speed} "
+              "m/s CONTINUOUSLY, moving or not.\n"
+              "          The carried divider, the axis and the exit-distance "
+              "floor are fiction\n"
+              "          whenever your pace differs -- a paused car burns the "
+              "traverse budget\n"
+              "          and a resumed one cuts the exit corridor on a stale "
+              "divider. For a\n"
+              "          pushed stage-3 run, switch the F710 on, drop "
+              "--no-deadman, and hold X\n"
+              "          exactly while the car is actually moving.")
 
 
 def main(argv=None):

@@ -271,3 +271,22 @@ def test_a_red_in_view_pulls_the_fill_in_even_in_follow():
     _painted, would = side_assign.fill_unlabeled(
         cones, max_range_m=side_assign.MAX_FILL_RANGE_M)
     assert would == 2
+
+
+def test_a_blind_dry_run_names_the_cost_of_its_travel_fiction(capsys):
+    """Three stage-3 runs in a row were pushed under --no-deadman, where the
+    push-speed accrues whether the car moves or not: the carried divider and
+    the exit floor drift from reality and the traverse can only time out.
+    The combination is allowed -- it is the documented bring-up flow -- but it
+    must say what it costs and name the honest alternative."""
+    args = drive_junction.parse_args(
+        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman"])
+    drive_junction.announce(args)
+    out = capsys.readouterr().out
+    assert "moving or not" in out
+    assert "hold X" in out
+
+    args = drive_junction.parse_args(
+        ["--route", os.path.normpath(ROUTE), "--dry-run"])
+    drive_junction.announce(args)
+    assert "moving or not" not in capsys.readouterr().out
