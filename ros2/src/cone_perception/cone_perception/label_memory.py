@@ -42,7 +42,6 @@ The asymmetry in stakes is the asymmetry in treatment.
 
 import math
 
-from cone_perception import ego_motion
 from cone_perception.cone_classes import CLASS_RED, UNLABELED
 from cone_perception.fusion import LabeledCone
 
@@ -52,6 +51,15 @@ from cone_perception.fusion import LabeledCone
 # car-length past it. A hand-pushed mouth outlasts this; there the latch in
 # topo_state still does the carrying, as it always did.
 TTL_S = 3.0
+
+# How far a remembered red may be re-bound per tick. Deliberately TIGHTER
+# than ego_motion's 0.35 m tracker gate: the tracker only has to keep identity
+# for a rigid fit, where one swap among many pairs washes out. A memory hop IS
+# the failure -- observed on the track 2026-09-01, a red label walking cluster
+# to cluster through the dense near field until five cones read red at once.
+# 0.20 m still covers the fastest legal per-tick displacement (0.12 m at
+# 1.2 m/s and 10 Hz) with margin, and halves the hop reach.
+MEMORY_GATE_M = 0.20
 
 # Stamped on a remembered red. Distinct from every real detection (those are
 # >= the detector's conf threshold) and from side_assign's geometric 0.0, so
@@ -72,7 +80,7 @@ class _Entry(object):
 class RedMemory(object):
     """The reds the camera has vouched for recently, riding their clusters."""
 
-    def __init__(self, ttl_s=TTL_S, gate_m=ego_motion.MATCH_GATE_M):
+    def __init__(self, ttl_s=TTL_S, gate_m=MEMORY_GATE_M):
         self.ttl_s = ttl_s
         self.gate_m = gate_m
         self._entries = []
@@ -94,6 +102,11 @@ class RedMemory(object):
             best, best_d = None, self.gate_m
             for i, cone in enumerate(out):
                 if i in claimed:
+                    continue
+                # A cluster the camera has labelled anything OTHER than red is
+                # not this red, whatever the distance says -- re-binding onto
+                # it is how a remembered label walks onto a boundary cone.
+                if cone.cone_class not in (UNLABELED, CLASS_RED):
                     continue
                 d = math.hypot(cone.x - entry.x, cone.y - entry.y)
                 if d < best_d:

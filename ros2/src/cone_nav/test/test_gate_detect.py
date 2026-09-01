@@ -279,3 +279,21 @@ def test_the_survey_reports_every_red_by_range_nearest_first():
     assert len(found.ranges_m) == 3
     assert found.ranges_m == sorted(found.ranges_m)
     assert found.ranges_m[0] == pytest.approx(2.0, abs=0.01)
+
+
+def test_three_reds_strung_along_the_corridor_are_not_a_gate():
+    """Observed live: reds at 0.74, 1.08 and 2.95 m whose mutual spacings
+    happened to land inside the gap window, committing a junction at a gate
+    that was not there. A real gate is one tape line ACROSS the axis; a trio
+    with metres of along-axis scatter fails it whatever its spacings say."""
+    from cone_nav.topology.gate_detect import SCATTER
+
+    strung = [cone(0.7, 0.3), cone(1.1, -0.3), cone(2.9, 0.1)]
+    assert detect(strung) is None
+    assert survey(strung).reason == SCATTER
+
+
+def test_tape_slop_does_not_trip_the_collinearity_guard():
+    """+-10 cm of along-axis slop is sloppy tape, not a phantom gate."""
+    slop = [cone(2.05, 0.76), cone(1.98, 0.0), cone(2.08, -0.76)]
+    assert detect(slop) is not None

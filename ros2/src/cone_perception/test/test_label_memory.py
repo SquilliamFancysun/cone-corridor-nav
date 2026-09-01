@@ -117,3 +117,24 @@ def test_a_whole_gate_survives_a_dropout_together():
     out, n = memory.apply(blind, now=0.4)
     assert n == 3
     assert all(c.cone_class == CLASS_RED for c in out)
+
+
+def test_memory_cannot_ride_onto_a_cone_the_camera_calls_blue():
+    """The hop that multiplied reds on the track: an expiring red re-binding
+    to whichever cluster drifted nearest. A cluster the camera has labelled
+    another colour is not this red at any distance."""
+    memory = label_memory.RedMemory()
+    memory.apply([cone(CLASS_RED, 1.0, 0.10)], now=0.0)
+    out, n = memory.apply([cone(CLASS_BLUE, 1.0, 0.15),
+                           cone(UNLABELED, 1.0, 0.05)], now=0.1)
+    assert n == 1
+    assert out[0].cone_class == CLASS_BLUE       # untouched
+    assert out[1].cone_class == CLASS_RED        # the rightful heir
+
+
+def test_the_memory_gate_is_tighter_than_the_tracker():
+    """A tracker swap washes out of a rigid fit; a memory hop IS the failure.
+    The memory's per-tick reach must undercut ego_motion's."""
+    from cone_perception import ego_motion
+    assert label_memory.MEMORY_GATE_M < ego_motion.MATCH_GATE_M
+    assert label_memory.MEMORY_GATE_M > 1.2 * 0.1   # fastest legal tick step

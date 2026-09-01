@@ -67,6 +67,14 @@ from cone_nav.corridor.centerline import MAX_PAIR_EDGE_M, MIN_PAIR_EDGE_M
 # hope. Arming a junction manoeuvre on that is worse than arming late.
 GATE_ARM_RANGE_M = 3.0
 
+# How far a red may sit off the line fitted through the three, perpendicular
+# distance. A real gate is one tape line; its residual is centimetres. The
+# guard exists because the gap window alone once passed a trio strung 2.2 m
+# ALONG the corridor -- three unrelated reds whose mutual spacings happened to
+# land inside [0.6, 2.5] -- and committed a junction at a gate that was not
+# there (observed 2026-09-01, with label memory multiplying the near reds).
+MAX_LINE_OFFSET_M = 0.20
+
 # Why `detect` declined, in the words the trial log carries. Short enough to sit
 # in a column, specific enough to name the fix: DISTANCE sends you to where the
 # car is standing, CROWDED to the clear band around each red, EXTRA to the
@@ -76,6 +84,7 @@ DISTANCE = "reds in view, not all three in range"
 CROWDED = "fewer than three reds"
 EXTRA = "more than three reds in range"
 GAPS = "gaps outside the pair window"
+SCATTER = "reds not in a line"
 
 
 class RedSurvey(object):
@@ -219,7 +228,7 @@ def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
     # the gaps are what prove the track is laid right and the RANGE is the
     # problem. Measured on more or fewer than three there is no gate to measure.
     triple = in_arm if len(in_arm) == 3 else (reds if len(reds) == 3 else None)
-    gaps, junction = None, None
+    gaps, junction, collinear = None, None, True
     if triple is not None:
         fitted = fit_axis(triple, default_rad=axis_rad)
         # Order left to right across the mouth. Sorting on the fitted axis
@@ -229,7 +238,16 @@ def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
         left, centre, right = sorted(triple, key=lambda c: _offset(c, fitted),
                                      reverse=True)
         gaps = (_distance(left, centre), _distance(centre, right))
-        if len(in_arm) == 3 and all(min_gap_m <= g <= max_gap_m for g in gaps):
+        # Along-axis offset of each red from the centre one: the reds are
+        # laid on one tape line ACROSS the axis, so a real gate's offsets are
+        # centimetres, and three cones that will not sit on a line are not a
+        # gate no matter what their spacings measure.
+        along = [(c.x - centre.x) * math.cos(fitted)
+                 + (c.y - centre.y) * math.sin(fitted)
+                 for c in (left, centre, right)]
+        collinear = max(abs(a) for a in along) <= MAX_LINE_OFFSET_M
+        if (len(in_arm) == 3 and collinear
+                and all(min_gap_m <= g <= max_gap_m for g in gaps)):
             junction = Junction(
                 left=left, centre=centre, right=right,
                 left_gate=_midpoint(left, centre),
@@ -245,8 +263,14 @@ def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
         reason = EXTRA
     elif len(reds) >= 3:
         # Three or more exist; if they are not all in range the car is too far
-        # back, and if they are then a gap failed.
-        reason = DISTANCE if len(in_arm) < 3 else GAPS
+        # back; in range but not collinear is not a gate at all; else a gap
+        # failed.
+        if len(in_arm) < 3:
+            reason = DISTANCE
+        elif triple is not None and not collinear:
+            reason = SCATTER
+        else:
+            reason = GAPS
     else:
         reason = CROWDED
 
