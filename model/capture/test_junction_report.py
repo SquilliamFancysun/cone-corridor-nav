@@ -135,3 +135,58 @@ def test_the_too_far_back_message_names_the_laid_gap():
                                           gap_m=1.10)
     assert "1.10 m off the axis" in text
     assert "2.79" in text          # sqrt(3.0^2 - 1.10^2)
+
+
+def two_junction_rows():
+    """A left-then-right run: commit, pass, commit, pass."""
+    rows = []
+    t = [0.0]
+
+    def tick(state, turn, index, remaining, note=""):
+        t[0] += 0.1
+        rows.append({"t": t[0], "gate_live": state == "traverse",
+                     "gate_reason": "", "reds_seen": 3, "reds_in_view": 3,
+                     "red_gaps_m": "0.76/0.76", "gate_gaps_m": "0.76/0.76",
+                     "gate_range_m": 2.4, "topo_state": state, "turn": turn,
+                     "route_index": index, "route_remaining": remaining,
+                     "branch_cones_dropped": 4, "reach_m": 2.0,
+                     "topo_note": note})
+
+    for _ in range(3):
+        tick("follow", "left", 0, 2)
+    for _ in range(4):
+        tick("traverse", "left", 0, 2)
+    tick("follow", "right", 1, 1, note="passed")
+    for _ in range(3):
+        tick("follow", "right", 1, 1)
+    for _ in range(4):
+        tick("traverse", "right", 1, 1)
+    tick("follow", "", 2, 0, note="passed")
+    return rows
+
+
+def test_a_two_junction_route_is_not_reported_as_a_double_fault():
+    """The demo track is left-then-right. A report that hardcodes 'expect 1'
+    calls the second junction a fault twice over -- once for entering the
+    manoeuvre again, once for passing again."""
+    rows = two_junction_rows()
+    assert junction_report.route_length(rows) == 2
+    assert junction_report.route_turns(rows) == ["left", "right"]
+
+
+def test_the_manoeuvre_counts_are_marked_against_the_route(tmp_path, capsys):
+    path = tmp_path / "two.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in two_junction_rows()))
+
+    junction_report.report(junction_report.load(str(path)), str(path),
+                           expect_gap=0.76)
+    out = capsys.readouterr().out
+    assert "route asked for 2 junction(s): left then right" in out
+    assert "OK    entered the manoeuvre 2 time(s)        expect 2" in out
+    assert "OK    confirmed passes    2" in out
+
+
+def test_a_single_junction_log_still_expects_one():
+    """The old bring-up logs must keep reading correctly."""
+    rows = rows_with(gate_detect.NO_REDS, 0, 0)
+    assert junction_report.route_length(rows) == 1

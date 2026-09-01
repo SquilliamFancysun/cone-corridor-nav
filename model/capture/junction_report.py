@@ -151,6 +151,37 @@ def gaps_of(rows, field="gate_gaps_m"):
     return out
 
 
+def route_length(rows):
+    """How many junctions the route held, from the log itself.
+
+    `route_index` counts the entries consumed and `route_remaining` the ones
+    still to come, so their sum is the route's length on every tick. Reading
+    it beats assuming one: the same log format serves a single-junction
+    bring-up and a two-junction demo, and a report that hardcodes 1 calls the
+    second junction a fault.
+    """
+    for row in rows:
+        if "route_index" in row and "route_remaining" in row:
+            return row["route_index"] + row["route_remaining"]
+    return 1
+
+
+def route_turns(rows):
+    """The turns actually executed, in order -- one per confirmed pass.
+
+    `turn` is blank once the route is spent, so it is read from the tick the
+    manoeuvre COMMITTED on rather than the one it finished on.
+    """
+    out = []
+    previous = None
+    for row in rows:
+        state = row.get("topo_state", "")
+        if state == "traverse" and previous != "traverse" and row.get("turn"):
+            out.append(row["turn"])
+        previous = state
+    return out
+
+
 def transitions(rows):
     out = []
     previous = None
@@ -245,10 +276,17 @@ def report(rows, path, expect_gap=EXPECT_GAP_M):
     passes = [r for r in rows if r.get("topo_note") == "passed"]
     timeouts = [r for r in rows if "timed out" in (r.get("topo_note") or "")]
     traverses = sum(1 for _t, was, now, _g in moves if now == "traverse")
-    print(f"    {mark(traverses == 1)} entered the manoeuvre {traverses} time(s)"
-          "        expect 1 per junction")
-    print(f"    {mark(len(passes) == 1)} confirmed passes    {len(passes)}"
-          "                  expect 1 per junction")
+    # How many junctions the ROUTE asked for, read out of the log rather than
+    # assumed: index counts the ones consumed and remaining the ones still to
+    # come, so their sum is the route's length on every tick. A two-junction
+    # route must not read as a failure for entering the manoeuvre twice.
+    expected = route_length(rows)
+    turns = " then ".join(r for r in route_turns(rows)) or "-"
+    print(f"    ..... route asked for {expected} junction(s): {turns}")
+    print(f"    {mark(traverses == expected)} entered the manoeuvre "
+          f"{traverses} time(s)        expect {expected}")
+    print(f"    {mark(len(passes) == expected)} confirmed passes    "
+          f"{len(passes)}                  expect {expected}")
     if timeouts:
         print("    CHECK traverse TIMED OUT -- the corridor never came back on")
         print("          the far side, or DUTY_TO_MPS is badly off for this car")
