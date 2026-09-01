@@ -40,6 +40,21 @@ MAX_BEARING_ERR_DEG = 4.0
 # is not a reason to loosen it.
 MAX_DETECTION_AGE_S = 0.30
 
+# How far the lidar's range and the box-height range may disagree before a
+# match is refused, as a function of the box's own estimate. range_bbox was
+# recorded from the start "to DISAGREE: when a cluster has been matched to the
+# wall behind a cone, the two ranges diverge, and nothing else in the pipeline
+# can notice" -- and nothing acted on it. The bill came due when the platform
+# pitch was flattened: the ground ring had been physically erasing everything
+# past ~2.5 m, and once the world behind the cones entered the scan, boxes
+# started landing on background clutter at the right bearing and the wrong
+# range -- phantom boundary cones at the wall, "reds" at 3.5-4.5 m. The bound
+# is generous (box-height range is ~+-10-15% plus quantisation): 0.35 m of
+# slack plus a quarter of the estimated range. A clipped box has no estimate
+# (NaN) and is not gated.
+RANGE_SLACK_M = 0.35
+RANGE_SLACK_FRACTION = 0.25
+
 
 class LabeledCone(object):
     """One cone, shaped like cone_msgs/LabeledCone.
@@ -92,10 +107,11 @@ class FusionResult(object):
 
     __slots__ = ("cones", "candidates", "detections", "matched",
                  "out_of_fov", "unmatched_in_fov", "unmatched_detections",
-                 "detection_age_s", "stale")
+                 "detection_age_s", "stale", "range_rejected")
 
     def __init__(self, cones, candidates, detections, matched, out_of_fov,
-                 unmatched_in_fov, unmatched_detections, detection_age_s, stale):
+                 unmatched_in_fov, unmatched_detections, detection_age_s, stale,
+                 range_rejected=0):
         self.cones = cones
         self.candidates = candidates
         self.detections = detections
@@ -105,6 +121,7 @@ class FusionResult(object):
         self.unmatched_detections = unmatched_detections
         self.detection_age_s = detection_age_s
         self.stale = stale
+        self.range_rejected = range_rejected
 
     def as_dict(self):
         return {
@@ -116,6 +133,7 @@ class FusionResult(object):
             "unmatched_detections": self.unmatched_detections,
             "detection_age_s": round(self.detection_age_s, 3),
             "stale": self.stale,
+            "range_rejected": self.range_rejected,
         }
 
     def __repr__(self):
@@ -151,14 +169,23 @@ def associate(candidates, detections, intr, detection_age_s=0.0,
                 if geometry.in_camera_fov(b, fov_margin_deg)]
 
     measured = [geometry.detection_bearing(d, intr) for d in usable]
+    ranged = [geometry.range_from_bbox(d, intr) for d in usable]
     gate = math.radians(max_bearing_err_deg)
 
     pairs = []
+    range_rejected = 0
     for ci in eligible:
         for di, bearing in enumerate(measured):
             cost = abs(geometry.wrap_pi(predicted[ci] - bearing))
-            if cost <= gate:
-                pairs.append((cost, ci, di))
+            if cost > gate:
+                continue
+            expected = ranged[di]
+            if not math.isnan(expected):
+                slack = RANGE_SLACK_M + RANGE_SLACK_FRACTION * expected
+                if abs(candidates[ci].range_m - expected) > slack:
+                    range_rejected += 1
+                    continue
+            pairs.append((cost, ci, di))
     pairs.sort()
 
     taken_c, taken_d = {}, set()
@@ -199,6 +226,7 @@ def associate(candidates, detections, intr, detection_age_s=0.0,
         unmatched_detections=len(usable) - len(taken_d),
         detection_age_s=detection_age_s,
         stale=stale,
+        range_rejected=range_rejected,
     )
 
 

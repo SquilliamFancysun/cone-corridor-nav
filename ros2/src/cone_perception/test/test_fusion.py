@@ -136,13 +136,26 @@ def test_range_bbox_agrees_with_the_lidar_on_a_correct_match():
     assert cone.range_disagreement() < 0.1
 
 
-def test_range_bbox_disagrees_when_the_cluster_is_the_wall_behind():
-    """The cross-check earning its keep: a box at 2 m against a cluster at 4 m."""
+def test_the_wall_behind_a_cone_is_refused_its_label():
+    """A box at 2 m against a cluster at 4 m: right bearing, wrong world.
+    range_bbox was recorded "to DISAGREE" from the start, and once the
+    flattened pitch let the world behind the cones into the scan, unarmed
+    disagreement meant phantom boundary cones at the wall. The pairing is now
+    refused and counted."""
     cand = [candidate(4.0, 0.0)]
     dets = [detection_at(2.0, 0.0, CLASS_BLUE)]
-    cone = fusion.associate(cand, dets, INTR).cones[0]
-    assert cone.labeled, "the bearings agree, so this pairing is made"
-    assert cone.range_disagreement() > 1.5
+    result = fusion.associate(cand, dets, INTR)
+    assert not result.cones[0].labeled
+    assert result.range_rejected == 1
+
+
+def test_an_honest_range_wobble_is_not_refused():
+    """The gate is for walls, not for the box estimate's own +-10-15%."""
+    cand = [candidate(2.3, 0.0)]
+    dets = [detection_at(2.0, 0.0, CLASS_BLUE)]
+    result = fusion.associate(cand, dets, INTR)
+    assert result.cones[0].labeled
+    assert result.range_rejected == 0
 
 
 def test_stereo_range_is_never_claimed():

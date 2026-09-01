@@ -67,6 +67,12 @@ MEMORY_GATE_M = 0.20
 # apart in the log.
 MEMORY_CONFIDENCE = 0.01
 
+# Only a red the detector was reasonably sure of earns a memory. Persisting a
+# 0.26-confidence flicker for three seconds turns clutter into a standing
+# phantom; the threshold sits above the detector's 0.25 floor and below any
+# steady real detection.
+REMEMBER_MIN_CONFIDENCE = 0.35
+
 
 class _Entry(object):
     __slots__ = ("x", "y", "expires_at")
@@ -132,7 +138,7 @@ class RedMemory(object):
 
         for cone in out:
             if cone.cone_class == CLASS_RED and \
-                    cone.confidence > MEMORY_CONFIDENCE:
+                    cone.confidence >= REMEMBER_MIN_CONFIDENCE:
                 self._remember(cone, now)
         return out, remembered
 
