@@ -343,22 +343,27 @@ def test_the_pipeline_drives_the_car_at_a_confirmed_goal():
 
     latch = goal_stop.GoalLatch()
     # Walk the car up the corridor so the latch sees the goal on consecutive
-    # ticks, as it would on a real approach.
-    for x in (1.0, 1.4, 1.8, 2.2, 2.6):
-        pose = cone_field.Pose(x, 0.0, 0.0)
+    # ticks, as it would on a real approach. One step per tick at the duty
+    # floor: the latch refuses a goal that moves further than GOAL_GATE_M
+    # between ticks, because on the track that was a different object.
+    step, start, ticks = 0.05, 2.40, 6
+    for i in range(ticks):
+        pose = cone_field.Pose(start + i * step, 0.0, 0.0)
         local = cone_field.cones_in_car_frame(layout, pose)
         out = drive_junction.drive_pipeline(
             cone_field.synth_scan(local),
             Set(cone_field.synth_detections(local, intr, CLASS_IDS)),
             cone_field.IDENTITY_CALIBRATION, intr, Args(), 0.0,
-            goal_latch=latch, goal_armed=True)
+            travel_m=step, goal_latch=latch, goal_armed=True)
 
+    final_x = start + (ticks - 1) * step
     line, duty, goal_survey = out[3], out[5], out[11]
     assert goal_survey.reason == "", goal_survey.reason
     assert latch.confirmed
     assert latch.anchor_ok
+    assert latch.hops == 0
     # The goal is the far end of the driven line -- that is what the anchor is.
-    assert line.points[-1] == pytest.approx((goal_xy[0] - 2.6, 0.0), abs=0.05)
+    assert line.points[-1] == pytest.approx((goal_xy[0] - final_x, 0.0), abs=0.05)
     assert duty.duty > 0.0, duty.reason
 
 

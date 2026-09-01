@@ -43,6 +43,29 @@ exactly one). Debouncing the TRIGGER would be expensive and pointless: at the
 0.05 duty floor the car covers 3.8 cm per tick, so three ticks of confirmation is
 11 cm of overshoot bought for nothing.
 
+## Why a sighting can be refused for being in the wrong place
+
+`fusion.associate` matches a camera box to a lidar cluster on BEARING alone. The
+range cross-check that would catch a match to the wrong object is skipped when
+the box is clipped, because a clipped box has no height and so no range estimate
+-- and up close the trophy fills the frame vertically, so it clips. Two objects
+on the same bearing then become interchangeable.
+
+Measured on the car 2026-09-01 (`goal-dry2.jsonl`): through the whole run-in the
+magenta label alternated between the trophy at 0.58 m and something 1.17 m
+behind it, fifteen times, one magenta in view on every tick. The anchor is what
+the car steers at and what sets `reach`, so that is a 1.17 m target jump and a
+0.95-2.13 m swing in the input to the speed law -- and had the latch been bound
+to the far object at the moment the car reached the trophy, it would not have
+stopped at all. It stopped because the coin landed the right way.
+
+So a confirmed goal may only move `gate_m` per tick, which is the rule
+`label_memory.RedMemory` already runs on and for the identical reason. Before
+confirmation a hop is not refused but RESTARTS the count, so what gets confirmed
+is an object that held still, not whichever one was seen three times between
+jumps. `hops` is counted and logged: a run that finished with hops in it was
+driving at something that could not be pinned down.
+
 ## Carrying the goal through a dropout
 
 If magenta flickers off during the run-in the anchor vanishes, the line collapses
@@ -89,6 +112,14 @@ RUN_IN_M = 1.0
 # why this is consecutive and why the trigger gets no such treatment.
 CONFIRM_TICKS = 3
 
+# How far a confirmed goal may move between ticks before the sighting is treated
+# as a different object. The same value and the same argument as
+# `label_memory.MEMORY_GATE_M`: the goal's apparent motion is the car's own
+# travel, 3.8 cm per tick at the duty floor and 0.12 m at 1.2 m/s, so 0.20 m
+# covers the fastest legal displacement with margin and still rejects the 1.17 m
+# hop measured on the track.
+GOAL_GATE_M = 0.20
+
 # How long the goal may be carried without the camera re-confirming it, in ticks.
 # ~1 s at the measured 9.9 Hz, about 0.38 m at the duty floor. Past this the
 # latch drops rather than steering the car at a remembered point.
@@ -104,16 +135,18 @@ class GoalLatch(object):
     """
 
     __slots__ = ("stop_range_m", "run_in_m", "confirm_ticks", "max_blind_ticks",
-                 "state", "goal_xy", "blind_ticks", "note", "_sightings",
-                 "_live")
+                 "gate_m", "state", "goal_xy", "blind_ticks", "hops", "note",
+                 "_sightings", "_live")
 
     def __init__(self, stop_range_m=STOP_RANGE_M, run_in_m=RUN_IN_M,
                  confirm_ticks=CONFIRM_TICKS,
-                 max_blind_ticks=GOAL_BLIND_TICKS):
+                 max_blind_ticks=GOAL_BLIND_TICKS, gate_m=GOAL_GATE_M):
         self.stop_range_m = stop_range_m
         self.run_in_m = run_in_m
         self.confirm_ticks = confirm_ticks
         self.max_blind_ticks = max_blind_ticks
+        self.gate_m = gate_m
+        self.hops = 0
         self.state = SEEKING
         self.goal_xy = None
         self.blind_ticks = 0
@@ -203,10 +236,7 @@ class GoalLatch(object):
 
         self._carry_forward(travel_m, yaw_delta_rad)
         if goal is not None:
-            # A live sighting always beats a carried estimate.
-            self.goal_xy = (goal.x, goal.y)
-            self.blind_ticks = 0
-            self._sightings += 1
+            self._sight((goal.x, goal.y))
         else:
             self.blind_ticks += 1
             # Consecutive, and only while nothing has been committed to yet.
@@ -230,6 +260,39 @@ class GoalLatch(object):
             self.state = RUN_IN
         return self.state
 
+    def _sight(self, xy):
+        """Take a live sighting, or refuse it for being somewhere else.
+
+        A live sighting beats the carried estimate -- but only one that could be
+        the same object. See the module docstring: the label alternated between
+        two clusters 1.17 m apart on the track, and nothing here noticed.
+        """
+        if self.goal_xy is None:
+            self.goal_xy = xy
+            self.blind_ticks = 0
+            self._sightings = 1
+            return
+
+        hop = math.hypot(xy[0] - self.goal_xy[0], xy[1] - self.goal_xy[1])
+        if hop <= self.gate_m:
+            self.goal_xy = xy
+            self.blind_ticks = 0
+            self._sightings += 1
+            return
+
+        self.hops += 1
+        if self.confirmed:
+            # Committed to an object; this sighting is a different one. Carry
+            # rather than jump, and let the blind budget end it if the real goal
+            # never comes back.
+            self.blind_ticks += 1
+            return
+        # Not committed yet, so nothing is being abandoned. Start again here:
+        # what earns confirmation should be an object that held still.
+        self.goal_xy = xy
+        self.blind_ticks = 0
+        self._sightings = 1
+
     def release(self):
         """Clear a stop so the car may drive again.
 
@@ -245,6 +308,7 @@ class GoalLatch(object):
         self.blind_ticks = 0
         self.note = note
         self._sightings = 0
+        self.hops = 0
 
     def __repr__(self):
         where = ("%.2f m" % self.range_m) if self.goal_xy is not None else "-"

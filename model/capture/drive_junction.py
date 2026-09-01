@@ -116,6 +116,7 @@ JUNCTION_STATUS_SCHEMA = {
         magenta_in_view={"type": "integer", "description": "magenta cones at ANY range"},
         goal_armed={"type": "boolean", "description": "the route is spent, so a goal may stop the car"},
         goal_blind_ticks={"type": "integer", "description": "ticks the goal has been carried rather than seen"},
+        goal_hops={"type": "integer", "description": "sightings refused for being too far from the tracked goal -- the label on a different object"},
         goal_note={"type": "string"},
     ),
 }
@@ -280,6 +281,7 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         magenta_in_view=len(goal_survey.magenta) if goal_survey else 0,
         goal_armed=bool(goal_armed),
         goal_blind_ticks=goal_latch.blind_ticks if goal_latch else 0,
+        goal_hops=goal_latch.hops if goal_latch else 0,
         goal_note=goal_latch.note if goal_latch else "",
     )
 
@@ -556,6 +558,13 @@ def main(argv=None):
             status = status_of(base, topo, junction, dropped, survey,
                                goal_survey=goal_survey, goal_latch=goal_latch,
                                goal_armed=goal_armed)
+            if goal_latch.stopped:
+                # Say what actually stopped the car. Once latched the line is
+                # the goal anchor alone, so `speed_ctrl` reports "centerline too
+                # short" -- true, incidental, and the first field an analyst
+                # reads. An arrival must not be filed under a perception fault.
+                status["stop_reason"] = "goal reached"
+
             status["labeled_by_memory"] = remembered
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
             status["odo_pairs"] = odo_step.pairs if odo_step else 0
