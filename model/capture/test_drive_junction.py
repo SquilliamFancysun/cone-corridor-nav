@@ -182,7 +182,6 @@ class Args(object):
     no_camera = False
     lookahead = 1.0
     max_duty = 0.1
-    fill_range_at_junction = 1.0
 
 
 def test_the_pipeline_arms_the_machine_on_a_junction():
@@ -222,12 +221,12 @@ def test_the_pipeline_arms_the_machine_on_a_junction():
         cone_field.JUNCTION_GATE_GAP_M, abs=0.15)
 
 
-def test_a_red_in_view_pulls_the_fill_in_even_in_follow():
+def test_the_gate_band_masks_the_fill_where_the_reds_stand():
     """The trap seen on the track: standing in FOLLOW near the gate, the
-    centre red labelled in frame, the outer reds past the frame edge. With the
-    corridor fill range those outers are painted blue and yellow -- a fake
-    corridor whose midpoint is the centre cone, steering the car at the
-    island. Any labelled red in view must pull the fill in, engaged or not."""
+    centre red labelled in frame, the outer reds past the frame edge. The old
+    radius shrink protected them by starving the corridor; the band excludes
+    exactly the gate line -- where only reds may stand -- and fills everything
+    else at full reach."""
     from cone_perception.cone_classes import CLASS_RED, UNLABELED
     from cone_perception.fusion import LabeledCone
     from cone_nav.corridor import side_assign
@@ -237,36 +236,24 @@ def test_a_red_in_view_pulls_the_fill_in_even_in_follow():
         return LabeledCone(cls, 0.9 if cls != UNLABELED else 0.0, x, y,
                            range_lidar=math.hypot(x, y), points=4)
 
-    # Car 0.9 m from a tight gate: centre red in frame and labelled, outer
-    # reds at +-0.75 out of frame and unlabeled, slant range ~1.17 m.
+    # Car 0.9 m from a tight gate: centre red labelled, outers out of frame
+    # and unlabeled -- plus a legitimate out-of-frame boundary cone at 0.5 m
+    # that the blind-spot fill exists for.
     cones = [cone(CLASS_RED, 0.9, 0.0),
-             cone(UNLABELED, 0.9, 0.75), cone(UNLABELED, 0.9, -0.75)]
+             cone(UNLABELED, 0.9, 0.76), cone(UNLABELED, 0.9, -0.76),
+             cone(UNLABELED, 0.5, 0.75)]
     survey = gate_detect.survey(cones)
-    assert survey.reds, "the centre red must be in view for this scene"
+    mask = side_assign.gate_line_of(None, 0.0, survey.reds, 0.0)
+    assert mask is not None
 
-    args = drive_junction.parse_args(
-        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman"])
-    near_gate = bool(survey.reds) and (
-        min(survey.ranges_m) <= side_assign.MAX_FILL_RANGE_M)
-    fill_range = (args.fill_range_at_junction if False or near_gate
-                  else side_assign.MAX_FILL_RANGE_M)
-    assert fill_range == args.fill_range_at_junction
+    filled, count = side_assign.fill_unlabeled(cones, gate_line=mask)
+    # The boundary cone is painted; both out-of-frame reds are left alone.
+    assert count == 1
+    by_pos = {(c.x, c.y): c.cone_class for c in filled}
+    assert by_pos[(0.9, 0.76)] == UNLABELED
+    assert by_pos[(0.9, -0.76)] == UNLABELED
+    assert by_pos[(0.5, 0.75)] != UNLABELED
 
-    # ...and a red merely in VIEW, three metres out, must not pull it in:
-    # that starves the corridor of its near-field labels a straightaway
-    # early. Painting needs the red inside the fill's own reach.
-    far = gate_detect.survey([cone(CLASS_RED, 3.5, 0.0)])
-    assert far.reds
-    assert min(far.ranges_m) > side_assign.MAX_FILL_RANGE_M
-
-    # And at that range the outers are beyond the pulled-in fill: they stay
-    # unlabeled rather than becoming a wall across the mouth.
-    filled, count = side_assign.fill_unlabeled(cones, max_range_m=fill_range)
-    assert count == 0
-    # The corridor fill range WOULD have painted them -- the failure this pins.
-    _painted, would = side_assign.fill_unlabeled(
-        cones, max_range_m=side_assign.MAX_FILL_RANGE_M)
-    assert would == 2
 
 
 def test_a_dry_run_announces_that_travel_is_measured(capsys):

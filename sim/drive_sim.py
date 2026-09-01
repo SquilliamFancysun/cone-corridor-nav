@@ -39,7 +39,7 @@ from cone_nav.topology import gate_detect, topo_state
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
-from cone_perception import clustering, fusion
+from cone_perception import clustering, fusion, label_memory
 from cone_perception import extrinsics
 from cone_perception.cone_classes import CLASS_NAMES
 from cone_perception.geometry import intrinsics_from_hfov
@@ -65,10 +65,6 @@ PREVIEW_W, PREVIEW_H = 416, 234
 # and drive_junction.py cannot disagree about how far the car thinks it went.
 DUTY_TO_MPS = speed_ctrl.DUTY_TO_MPS
 
-# drive_junction.py's --fill-range-at-junction default, mirrored. The sim has
-# no argparse; a diff between this and that default is a sim that quietly
-# stops being the car.
-FILL_RANGE_AT_JUNCTION_M = 1.0
 
 # Half the car's width plus a cone's base radius. Closer than this and the car
 # has hit the cone.
@@ -278,7 +274,7 @@ def observe(layout, pose, intr, dropout=(), seed=None, detector_hfov=None):
 def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
              reference_heading_rad=0.0, fill_in_fov=False,
              topo=None, previous_line=None, travel_m=0.0,
-             yaw_delta_rad=0.0):
+             yaw_delta_rad=0.0, red_memory=None, now_s=0.0):
     """The production perception path, exactly as `fusion_view.pipeline_once`.
 
     Kept as its own function so a divergence between the sim and the car is a
@@ -303,33 +299,28 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     result = fusion.associate(candidates, detections, intr,
                               detection_age_s=detection_age_s)
 
-    # The survey reads the PRE-fill list, exactly as drive_junction.py does.
-    # This sim used to detect on the post-fill list, which is a different
-    # program: an out-of-frame outer red that the fill had painted blue was
-    # invisible to gate_detect here while remaining visible on the car. The
-    # 2026-08-31 gap sweep was biased against narrow gates by exactly that.
-    survey = gate_detect.survey(result.cones, axis_rad=reference_heading_rad)
+    # Mirrors drive_junction.drive_pipeline tick for tick: remembered reds
+    # first, then the survey on the PRE-fill list, then the band-masked fill.
+    # This sim used to detect on the post-fill list and fill at a different
+    # range than the car -- the 2026-08-31 gap sweep was biased by exactly
+    # that, which is why a divergence here is a bug and not a simplification.
+    cones, _remembered = ((red_memory.apply(result.cones, now_s))
+                          if red_memory is not None else (result.cones, 0))
+    survey = gate_detect.survey(cones, axis_rad=reference_heading_rad)
     if topo is not None:
         topo.update(survey.junction, previous_line, travel_m=travel_m,
                     yaw_delta_rad=yaw_delta_rad)
     engaged = topo is not None and topo.engaged
 
-    cones, filled = result.cones, 0
+    filled = 0
     if fill_sides:
-        # Mirrors drive_junction.drive_pipeline: near a gate the corridor
-        # fill range paints out-of-frame reds into a wall across the mouth, so
-        # a labelled red inside the fill's own reach pulls the fill in --
-        # engaged or not. A red merely in view at range must not: that starves
-        # the corridor of near-field labels a straightaway early. A plain
-        # corridor run (topo is None) keeps the corridor behaviour.
-        near_gate = bool(survey.reds) and (
-            min(survey.ranges_m) <= side_assign.MAX_FILL_RANGE_M)
-        fill_range = (FILL_RANGE_AT_JUNCTION_M
-                      if topo is not None and (engaged or near_gate)
-                      else side_assign.MAX_FILL_RANGE_M)
+        line_mask = side_assign.gate_line_of(
+            topo.divider_xy if engaged else None,
+            topo.axis_rad if engaged else reference_heading_rad,
+            survey.reds, reference_heading_rad)
         cones, filled = fill_unlabeled(
             cones, reference_heading_rad=reference_heading_rad,
-            max_range_m=fill_range, fill_in_fov=fill_in_fov)
+            fill_in_fov=fill_in_fov, gate_line=line_mask)
 
     gate_xy, dropped = None, 0
     if topo is not None:
@@ -365,6 +356,7 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
 
     topo = topo_state.TopoState(RouteCursor(route)) if route else None
+    red_memory = label_memory.RedMemory() if route else None
     previous_line = None
     last_travel = 0.0
     last_yaw = 0.0
@@ -398,7 +390,7 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
             scan, detections, intr, detection_age_s, fill_sides=fill_sides,
             reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov,
             topo=topo, previous_line=previous_line, travel_m=last_travel,
-            yaw_delta_rad=last_yaw)
+            yaw_delta_rad=last_yaw, red_memory=red_memory, now_s=i * DT_S)
         previous_line = corridor_line
         # The corridor the car is in rotates relative to the car through a
         # bend, so the side split follows last frame's line rather than

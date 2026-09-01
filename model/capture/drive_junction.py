@@ -61,7 +61,8 @@ from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_nav.guidance import junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
 from cone_nav.topology import gate_detect, topo_state
-from cone_perception import clustering, ego_motion, extrinsics, fusion
+from cone_perception import (clustering, ego_motion, extrinsics, fusion,
+                             label_memory)
 from drive_corridor import (
     DEFAULT_PORT_WS,
     MAX_SCAN_AGE_S,
@@ -92,6 +93,7 @@ JUNCTION_STATUS_SCHEMA = {
         reds_m={"type": "string", "description": "range to every red, nearest first"},
         red_gaps_m={"type": "string", "description": "the two gaps between three reds, measured whether or not they armed"},
         gate_reason={"type": "string", "description": "why no triple this tick"},
+        labeled_by_memory={"type": "integer", "description": "reds restored from a tracked cluster's remembered label"},
         gate_range_m={"type": "number", "description": "to the chosen gate midpoint"},
         gate_gaps_m={"type": "string", "description": "the two measured gate widths"},
         branch_cones_dropped={"type": "integer"},
@@ -117,7 +119,7 @@ JUNCTION_SCHEMA = {
 
 def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                    axis_rad=0.0, topo=None, previous_line=None,
-                   travel_m=0.0, yaw_delta_rad=0.0):
+                   travel_m=0.0, yaw_delta_rad=0.0, red_memory=None):
     """One revolution -> cones, centerline, steering, duty, plus the manoeuvre.
 
     Identical to `drive_corridor.drive_pipeline` up to the fill and after the
@@ -132,13 +134,19 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                               max_bearing_err_deg=args.bearing_gate,
                               max_detection_age_s=args.max_detection_age)
 
-    cones, filled = result.cones, 0
+    # A red the camera vouched for recently stays red while its tracked
+    # cluster stands where it stood -- position lidar-fresh, colour remembered,
+    # everything expiring. This is what turns 23 flickering sightings in a
+    # window into a triple that HOLDS through detector misses and frame exits.
+    cones, remembered = ((red_memory.apply(result.cones, now))
+                         if red_memory is not None else (result.cones, 0))
+    filled = 0
     # Surveyed rather than merely detected, because "saw two reds and one merged
     # into a branch cone", "saw no red at all" and "saw all three from a metre
     # too far back" are different problems with different fixes, and a log that
     # only records whole triples cannot tell them apart. `survey.reason` is the
     # first field to read when stage 3 finds nothing.
-    survey = gate_detect.survey(result.cones, axis_rad=axis_rad)
+    survey = gate_detect.survey(cones, axis_rad=axis_rad)
     junction = survey.junction
     if topo is not None:
         topo.update(junction, previous_line, travel_m=travel_m,
@@ -146,32 +154,22 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
 
     engaged = topo is not None and topo.engaged
     if not args.no_fill:
-        # An outer red drops out of frame at ~2.1 m and comes back UNLABELED
-        # while still inside the fill's 2.0 m reach, so geometry paints it into
-        # a wall across the mouth the car is trying to drive through. Pulling
-        # the fill in to 1.0 m while a junction is engaged puts the reds outside
-        # it -- an outer red 1.0 m ahead is 1.68 m away, being 1.35 m off the
-        # axis -- while still covering the near blind spot, which is 0.75 m out.
-        #
-        # Engaged is not the only time that matters. Seen on the track
-        # 2026-08-31, standing in FOLLOW 0.9 m from a gate after a traverse
-        # timeout: the centre red was labelled in frame, both outer reds were
-        # past the frame edge, and the fill painted them blue and yellow -- a
-        # fake corridor whose midpoint was the centre cone, with the centerline
-        # aiming the car straight at the island. FOLLOW near a gate happens
-        # before the first sighting and after every pass or timeout, so the
-        # trigger is a labelled red within the fill's own reach, not the
-        # state machine: painting requires an out-of-frame red inside the fill
-        # range, and a labelled red that close means its siblings are too. A
-        # red glimpsed at 3.5 m must NOT pull the fill in -- that starves the
-        # corridor of its near-field labels a full straightaway early.
-        near_gate = bool(survey.reds) and (
-            min(survey.ranges_m) <= side_assign.MAX_FILL_RANGE_M)
-        fill_range = (args.fill_range_at_junction if engaged or near_gate
-                      else side_assign.MAX_FILL_RANGE_M)
+        # Full fill range everywhere, with a +-GATE_BAND_M mask along the gate
+        # line instead of the old radius shrink. The shrink protected the reds
+        # by starving the corridor -- the out-of-frame rows between 1.0 and
+        # 1.18 m went unlabelled for the whole engaged period and the mouth
+        # line thinned exactly where it was needed. The band excludes every
+        # red (the build rules keep 0.75 m clear either side of the red line)
+        # and nothing else, at any gap width. Sourced from the carried divider
+        # while engaged -- it survives the reds leaving frame -- else from the
+        # nearest labelled red.
+        line_mask = side_assign.gate_line_of(
+            topo.divider_xy if engaged else None,
+            topo.axis_rad if engaged else axis_rad,
+            survey.reds, axis_rad)
         cones, filled = fill_unlabeled(
             cones, reference_heading_rad=axis_rad,
-            fill_in_fov=args.no_camera, max_range_m=fill_range)
+            fill_in_fov=args.no_camera, gate_line=line_mask)
 
     gate_xy, dropped = None, 0
     if engaged and topo.junction is not None:
@@ -192,7 +190,7 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                                           extrinsics.WHEELBASE_M, origin=axle)
     duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
-            junction, dropped, survey)
+            junction, dropped, survey, remembered)
 
 
 def status_of(base, topo, junction, dropped, survey=None):
@@ -231,11 +229,6 @@ def parse_args(argv=None):
     parser.add_argument("--route", required=True,
                         help="path to a route file: one 'left' or 'right' per "
                              "junction, in order. See data/routes/")
-    parser.add_argument("--fill-range-at-junction", type=float, default=1.0,
-                        help="metres. While a junction is engaged, geometric "
-                             "side assignment is pulled in to this range, so an "
-                             "out-of-frame red is not painted into a wall "
-                             "across the mouth. 2.0 restores the corridor value")
     args = finalise_args(parser, parser.parse_args(argv))
 
     if args.no_camera:
@@ -345,6 +338,7 @@ def main(argv=None):
     # A pushed car covers the traverse's distance floor at walking pace, and
     # the travel it accrues is measured -- so the dry run gets a walker's
     # clock. Under power the driving bound stands.
+    red_memory = label_memory.RedMemory()
     topo = topo_state.TopoState(
         RouteCursor(args.route_turns),
         max_traverse_ticks=(topo_state.MAX_TRAVERSE_TICKS * 3
@@ -386,10 +380,10 @@ def main(argv=None):
 
             detection_set = detector_thread.latest()
             (result, cones, filled, line, pursuit, duty, corridor_line,
-             junction, dropped, survey) = drive_pipeline(
+             junction, dropped, survey, remembered) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
-                yaw_delta_rad=yaw_delta_rad)
+                yaw_delta_rad=yaw_delta_rad, red_memory=red_memory)
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
@@ -443,6 +437,7 @@ def main(argv=None):
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
             status = status_of(base, topo, junction, dropped, survey)
+            status["labeled_by_memory"] = remembered
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
             status["odo_pairs"] = odo_step.pairs if odo_step else 0
 

@@ -33,20 +33,6 @@ def run(turn, route=None, **layout):
 
 # --- the manoeuvre ------------------------------------------------------
 
-XFAIL_ENGAGED_FILL = pytest.mark.xfail(
-    reason="2026-08-31: the sim now runs the car's ACTUAL engaged fill range "
-           "(1.0 m, --fill-range-at-junction), and it starves the approach: "
-           "after commit, the corridor's out-of-FOV rows between 1.0 and "
-           "1.18 m go unlabeled and the line collapses before the mouth -- "
-           "the same reach collapse the track showed the same day. The old "
-           "sim filled at 2.0 m always, so these tests passed against a "
-           "pipeline the car does not run. Fix: mask the fill in a band "
-           "around the carried gate line instead of shrinking its radius; "
-           "re-run the gap sweep after.",
-    strict=False)
-
-
-@XFAIL_ENGAGED_FILL
 @pytest.mark.parametrize("turn", ["left", "right"])
 def test_the_car_takes_the_junction_and_reaches_the_goal(turn):
     _layout, result = run(turn)
@@ -63,7 +49,6 @@ def test_it_does_not_clip_the_divider(turn):
         f"struck a {result.struck_cone.color} cone" if result.struck_cone else "")
 
 
-@XFAIL_ENGAGED_FILL
 @pytest.mark.parametrize("turn", ["left", "right"])
 def test_the_route_is_what_picks_the_branch(turn):
     """Same track, wrong route: the car must end up somewhere else. Without
@@ -74,7 +59,6 @@ def test_the_route_is_what_picks_the_branch(turn):
     assert not wrong_way.completed
 
 
-@XFAIL_ENGAGED_FILL
 @pytest.mark.parametrize("turn", ["left", "right"])
 def test_the_line_never_runs_short_through_the_mouth(turn):
     """The constraint the whole geometry answers to: speed_ctrl stops the car
@@ -92,7 +76,6 @@ def test_the_branch_filter_actually_bites(turn):
     assert max(t.dropped for t in result.ticks) > 0
 
 
-@XFAIL_ENGAGED_FILL
 @pytest.mark.parametrize("turn", ["left", "right"])
 def test_the_turn_is_consumed_once_and_the_machine_lets_go(turn):
     """A manoeuvre that never ends leaves the branch filter cutting on a

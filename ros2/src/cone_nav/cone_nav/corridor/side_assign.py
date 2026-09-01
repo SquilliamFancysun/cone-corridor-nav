@@ -94,6 +94,17 @@ MAX_FILL_RANGE_M = 2.0
 # middle of the corridor would put a midpoint where there is no corridor.
 MIN_OFFSET_M = 0.25
 
+# No fill within this distance of the gate line, measured along the corridor
+# axis. The reds sit ON that line and the build rules keep a 0.75 m clear band
+# either side of it, so a +-0.35 m mask excludes every red -- in frame or out,
+# labelled or not -- while no legitimate boundary cone can fall inside it even
+# with sloppy tape. This replaces the earlier defence of shrinking the fill's
+# whole RADIUS near a gate, which protected the reds by starving the corridor:
+# the out-of-frame rows between 1.0 and 1.18 m went unlabelled for the entire
+# engaged period, and the line thinned exactly where the mouth needs it most.
+# A band asks the right question -- WHERE is this cone -- instead of how far.
+GATE_BAND_M = 0.35
+
 # Cones behind the car are NOT filled, and this is load-bearing rather than
 # tidiness. `centerline._longest_forward_chain` builds its chain by walking
 # midpoints in order of increasing distance FROM THE CAR, which is only the
@@ -112,9 +123,28 @@ MIN_OFFSET_M = 0.25
 # axle is still a wall of the corridor the car is in.
 
 
+def gate_line_of(divider_xy, axis_rad, reds, heading_rad):
+    """The gate line to mask, as (x, y, axis_rad), or None when no gate is
+    anywhere near.
+
+    Two sources, in order of trust: the carried divider while a junction is
+    engaged (it survives the reds leaving frame), else the nearest labelled
+    red with the current corridor heading -- which covers the FOLLOW-near-a-
+    gate windows, before first sighting and after a pass, where the machine
+    holds no latch but a red in view says the line is right there.
+    """
+    if divider_xy is not None:
+        return (divider_xy[0], divider_xy[1], axis_rad)
+    if reds:
+        nearest = min(reds, key=lambda c: math.hypot(c.x, c.y))
+        return (nearest.x, nearest.y, heading_rad)
+    return None
+
+
 def fill_unlabeled(cones, reference_heading_rad=0.0,
                    max_range_m=MAX_FILL_RANGE_M, min_offset_m=MIN_OFFSET_M,
-                   min_x_m=MIN_X_M, fill_in_fov=False):
+                   min_x_m=MIN_X_M, fill_in_fov=False,
+                   gate_line=None, gate_band_m=GATE_BAND_M):
     """UNLABELED cones the camera could not have seen -> BLUE / YELLOW.
 
     `fill_in_fov` drops the field-of-view test, so EVERY unlabelled cluster in
@@ -144,11 +174,26 @@ def fill_unlabeled(cones, reference_heading_rad=0.0,
     filled = 0
     cos_h = math.cos(reference_heading_rad)
     sin_h = math.sin(reference_heading_rad)
+    gate_cos = gate_sin = gx = gy = 0.0
+    if gate_line is not None:
+        gx, gy, gate_axis = gate_line
+        gate_cos, gate_sin = math.cos(gate_axis), math.sin(gate_axis)
 
     for cone in cones:
         if cone.cone_class != UNLABELED:
             out.append(cone)
             continue
+
+        if gate_line is not None:
+            # Along-axis distance from the gate line. Inside the band, an
+            # unlabelled cluster is a red the camera cannot currently see --
+            # nothing else is allowed to stand there -- and painting it built
+            # a fake corridor whose midpoint was the centre cone. Seen live
+            # 2026-08-31; the centerline aimed the car at the island.
+            along = ((cone.x - gx) * gate_cos + (cone.y - gy) * gate_sin)
+            if abs(along) <= gate_band_m:
+                out.append(cone)
+                continue
 
         # The camera's own predicate, not a copy of it -- fusion.associate uses
         # this same pair to decide `out_of_fov`, and the two must not drift.
