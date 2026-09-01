@@ -238,7 +238,12 @@ class GoalLatch(object):
         if goal is not None:
             self._sight((goal.x, goal.y))
         else:
-            self.blind_ticks += 1
+            # Only a goal that EXISTS can be carried. Counting every tick with
+            # no magenta in it made a run that had never seen the trophy report
+            # "carried 336" -- true of nothing, and the field is read as
+            # evidence that an arrival was made on dead reckoning.
+            if self.goal_xy is not None:
+                self.blind_ticks += 1
             # Consecutive, and only while nothing has been committed to yet.
             # Once the machine is in RUN_IN the blind budget is what governs.
             if self.state == SEEKING:

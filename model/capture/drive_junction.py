@@ -651,7 +651,13 @@ def main(argv=None):
                       f"{topo.state} {reds}"
                       + (f"/{topo.turn}" if topo.engaged else "")
                       + goal_line
-                      + (f"  [{duty.reason}]" if duty.reason else "")
+                      # status['stop_reason'], not duty.reason: once latched
+                      # the line is the anchor alone and the speed law says
+                      # "centerline too short", which is true, incidental, and
+                      # not what stopped the car. The log already says so; the
+                      # console must not disagree with it.
+                      + (f"  [{status['stop_reason']}]"
+                         if status["stop_reason"] else "")
                       + (f"  !! {health}" if health else ""))
     except KeyboardInterrupt:
         print("\nstopping")

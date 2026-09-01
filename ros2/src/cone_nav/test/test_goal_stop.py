@@ -316,3 +316,15 @@ def test_a_run_that_never_pins_the_goal_down_gives_up_rather_than_arriving():
         latch.update(goal_at(1.75), armed=True, travel_m=0.0)
     assert latch.state == SEEKING
     assert latch.note == "goal lost during run-in"
+
+
+def test_a_goal_never_seen_is_not_being_carried():
+    """`blind_ticks` is read as evidence that an arrival was made on dead
+    reckoning, so it must count only ticks where something is actually being
+    carried. A powered run that had not yet seen the trophy reported
+    'carried 336' -- true of nothing at all."""
+    latch = GoalLatch()
+    for _ in range(50):
+        latch.update(None, armed=True, travel_m=0.04)
+    assert latch.blind_ticks == 0
+    assert latch.goal_xy is None

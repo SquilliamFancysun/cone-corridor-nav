@@ -289,6 +289,31 @@ Same command without `--dry-run --no-deadman`, at `--max-duty 0.05`. Confirm:
 - releasing X and pressing it again drives on, so the trophy can be reset
   without restarting the tool.
 
+### 6e — what it did, 2026-09-01
+
+Full course under power at `--max-duty 0.05`, tool at `f0a275c`
+(`data/trials/goal-run-1551.jsonl`, 586 ticks, 359 armed, 10.0 Hz): LEFT at J1,
+RIGHT at J2, route fully consumed, then the goal. Run-in opened at **0.99 m** and
+the car stopped **0.27 m** from the trophy, `stop_reason` `goal reached`.
+
+The numbers to compare a later run against:
+
+| | value |
+|---|---|
+| run-in opened | 0.99 m (`RUN_IN_M` = 1.0) |
+| stopped at | 0.27 m (`--goal-stop` 0.30, one tick of travel inside it) |
+| `goal_hops` | 0 |
+| `goal_blind_ticks` through the run-in | 0 |
+| range backsteps during run-in | 0 |
+| duty through the run-in | 0.050 held, on a 1-point line |
+
+Two earlier dry runs are kept beside it because they are what the design was
+corrected against, and both failure signatures are worth recognising again:
+`goal-dry.jsonl` shows the stale-axis refusals (`magenta off the corridor axis`
+for 26 ticks of a clean approach) and `goal-dry2.jsonl` shows the label
+alternating between the trophy and an object 1.17 m behind it, fifteen times.
+`goal-dry3.jsonl` is the same course after both fixes.
+
 The default 0.30 m assumes the near-zero coast measured on this car. If the car
 overshoots, raise it; do not lower it below 0.20 m, where
 `clustering.MIN_CONE_RANGE_M` discards the trophy's return as a chassis leak and
