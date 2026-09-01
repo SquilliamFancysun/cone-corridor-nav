@@ -37,6 +37,7 @@ from cone_nav.guidance import junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
 from cone_nav.topology import gate_detect, topo_state
 from cone_nav.corridor.centerline import centerline
+from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_perception import clustering, fusion
 from cone_perception import extrinsics
@@ -63,6 +64,11 @@ PREVIEW_W, PREVIEW_H = 416, 234
 # Duty cycle -> metres per second. Imported rather than kept here, so the sim
 # and drive_junction.py cannot disagree about how far the car thinks it went.
 DUTY_TO_MPS = speed_ctrl.DUTY_TO_MPS
+
+# drive_junction.py's --fill-range-at-junction default, mirrored. The sim has
+# no argparse; a diff between this and that default is a sim that quietly
+# stops being the car.
+FILL_RANGE_AT_JUNCTION_M = 1.0
 
 # Half the car's width plus a cone's base radius. Closer than this and the car
 # has hit the cone.
@@ -296,17 +302,37 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     candidates = clustering.cone_candidates(scan, IDENTITY_CALIBRATION)
     result = fusion.associate(candidates, detections, intr,
                               detection_age_s=detection_age_s)
+
+    # The survey reads the PRE-fill list, exactly as drive_junction.py does.
+    # This sim used to detect on the post-fill list, which is a different
+    # program: an out-of-frame outer red that the fill had painted blue was
+    # invisible to gate_detect here while remaining visible on the car. The
+    # 2026-08-31 gap sweep was biased against narrow gates by exactly that.
+    survey = gate_detect.survey(result.cones, axis_rad=reference_heading_rad)
+    if topo is not None:
+        topo.update(survey.junction, previous_line, travel_m=travel_m,
+                    yaw_delta_rad=yaw_delta_rad)
+    engaged = topo is not None and topo.engaged
+
     cones, filled = result.cones, 0
     if fill_sides:
+        # Mirrors drive_junction.drive_pipeline: near a gate the corridor
+        # fill range paints out-of-frame reds into a wall across the mouth, so
+        # a labelled red inside the fill's own reach pulls the fill in --
+        # engaged or not. A red merely in view at range must not: that starves
+        # the corridor of near-field labels a straightaway early. A plain
+        # corridor run (topo is None) keeps the corridor behaviour.
+        near_gate = bool(survey.reds) and (
+            min(survey.ranges_m) <= side_assign.MAX_FILL_RANGE_M)
+        fill_range = (FILL_RANGE_AT_JUNCTION_M
+                      if topo is not None and (engaged or near_gate)
+                      else side_assign.MAX_FILL_RANGE_M)
         cones, filled = fill_unlabeled(
             cones, reference_heading_rad=reference_heading_rad,
-            fill_in_fov=fill_in_fov)
+            max_range_m=fill_range, fill_in_fov=fill_in_fov)
 
     gate_xy, dropped = None, 0
     if topo is not None:
-        junction = gate_detect.detect(cones, axis_rad=reference_heading_rad)
-        topo.update(junction, previous_line, travel_m=travel_m,
-                    yaw_delta_rad=yaw_delta_rad)
         if topo.engaged and topo.junction is not None:
             gate_xy, _divider = junction_exec.select(topo.junction, topo.turn)
             # The divider and axis come from the machine, not from the latched

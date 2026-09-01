@@ -150,7 +150,22 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
         # the fill in to 1.0 m while a junction is engaged puts the reds outside
         # it -- an outer red 1.0 m ahead is 1.68 m away, being 1.35 m off the
         # axis -- while still covering the near blind spot, which is 0.75 m out.
-        fill_range = (args.fill_range_at_junction if engaged
+        #
+        # Engaged is not the only time that matters. Seen on the track
+        # 2026-08-31, standing in FOLLOW 0.9 m from a gate after a traverse
+        # timeout: the centre red was labelled in frame, both outer reds were
+        # past the frame edge, and the fill painted them blue and yellow -- a
+        # fake corridor whose midpoint was the centre cone, with the centerline
+        # aiming the car straight at the island. FOLLOW near a gate happens
+        # before the first sighting and after every pass or timeout, so the
+        # trigger is a labelled red within the fill's own reach, not the
+        # state machine: painting requires an out-of-frame red inside the fill
+        # range, and a labelled red that close means its siblings are too. A
+        # red glimpsed at 3.5 m must NOT pull the fill in -- that starves the
+        # corridor of its near-field labels a full straightaway early.
+        near_gate = bool(survey.reds) and (
+            min(survey.ranges_m) <= side_assign.MAX_FILL_RANGE_M)
+        fill_range = (args.fill_range_at_junction if engaged or near_gate
                       else side_assign.MAX_FILL_RANGE_M)
         cones, filled = fill_unlabeled(
             cones, reference_heading_rad=axis_rad,
