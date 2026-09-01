@@ -380,6 +380,26 @@ def status_of(result, cones, filled, line, pursuit, duty, servo, armed, args,
     }
 
 
+def camera_health(detection_age_s, max_age_s, grace_s=3.0):
+    """The bench-line tag for a detector that has stopped producing.
+
+    Exists because of a run where the detector thread died on an X_LINK_ERROR
+    five seconds in and the operator pushed the whole course reading
+    '[no reds]' -- which was true, and useless: the camera had been gone for
+    forty seconds and nothing on the once-a-second line said so. The traceback
+    printed once and scrolled away. A stale detector and an empty scene are
+    different facts, and the line must not let them read the same.
+
+    Returns '' while frames are fresh. The grace period covers startup, where
+    the first inference legitimately takes a couple of seconds.
+    """
+    if detection_age_s <= max(grace_s, max_age_s):
+        return ""
+    if detection_age_s == float("inf"):
+        return "CAMERA: NO FRAMES YET"
+    return f"CAMERA STALE {detection_age_s:.0f}s -- labels are dead reckoning"
+
+
 def require_vehicle_geometry():
     """Refuse to run without the two measurements pure pursuit needs.
 
@@ -647,11 +667,14 @@ def main(argv=None):
             if now - last_report >= 1.0:
                 last_report = now
                 flag = "ARMED " if armed else "idle  "
+                health = camera_health(detection_age,
+                                       args.max_detection_age)
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
                       f"cones {result.matched}cam/{filled}geo/{len(cones)}"
-                      + (f"  [{duty.reason}]" if duty.reason else ""))
+                      + (f"  [{duty.reason}]" if duty.reason else "")
+                      + (f"  !! {health}" if health else ""))
     except KeyboardInterrupt:
         print("\nstopping")
     except Exception:

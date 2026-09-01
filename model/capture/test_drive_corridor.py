@@ -301,3 +301,13 @@ def test_the_status_record_carries_fusions_own_diagnostic_counters():
     assert record["out_of_fov"] == 5
     assert record["detections_stale"] is False
     assert set(record) <= set(drive_corridor.DRIVE_STATUS_SCHEMA["properties"])
+
+
+def test_a_dead_detector_is_named_on_the_bench_line():
+    """A detector thread that dies mid-run leaves '[no reds]' telling the
+    truth uselessly: the camera had been gone for forty seconds and nothing
+    said so. The health tag separates 'empty scene' from 'stale labels'."""
+    assert drive_corridor.camera_health(0.1, 0.3) == ""
+    assert drive_corridor.camera_health(2.0, 0.3) == ""          # startup grace
+    assert "STALE 41s" in drive_corridor.camera_health(41.2, 0.3)
+    assert "NO FRAMES" in drive_corridor.camera_health(float("inf"), 0.3)

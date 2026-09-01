@@ -471,12 +471,15 @@ def main(argv=None):
                     reds += f"  gaps {status['red_gaps_m']}"
                 if survey.reason:
                     reds += f"  [{survey.reason}]"
+                health = drive_corridor.camera_health(
+                    detection_age, args.max_detection_age)
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
                       f"{topo.state} {reds}"
                       + (f"/{topo.turn}" if topo.engaged else "")
-                      + (f"  [{duty.reason}]" if duty.reason else ""))
+                      + (f"  [{duty.reason}]" if duty.reason else "")
+                      + (f"  !! {health}" if health else ""))
     except KeyboardInterrupt:
         print("\nstopping")
     except Exception:
