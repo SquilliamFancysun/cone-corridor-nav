@@ -342,7 +342,14 @@ def main(argv=None):
         print(f"logging every tick to {args.log}")
     print("hold X on the F710 to arm. Release to stop. Ctrl-C to quit.\n")
 
-    topo = topo_state.TopoState(RouteCursor(args.route_turns))
+    # A pushed car covers the traverse's distance floor at walking pace, and
+    # the travel it accrues is measured -- so the dry run gets a walker's
+    # clock. Under power the driving bound stands.
+    topo = topo_state.TopoState(
+        RouteCursor(args.route_turns),
+        max_traverse_ticks=(topo_state.MAX_TRAVERSE_TICKS * 3
+                            if args.dry_run else
+                            topo_state.MAX_TRAVERSE_TICKS))
     started = time.monotonic()
     axis_rad = 0.0
     duty_now = 0.0

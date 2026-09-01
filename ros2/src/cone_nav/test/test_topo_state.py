@@ -322,3 +322,18 @@ def test_a_second_junction_is_taken_with_the_second_turn():
     pass_gate(topo)
     commit(topo)
     assert topo.latched_turn == "right"
+
+
+def test_the_traverse_bound_is_sizable_for_a_pushed_car():
+    """20 s crosses any mouth under power; a hand-pushed dry run with measured
+    odometry cleared its distance floor at tick 188 of 200 (2026-09-01) and
+    timed out twelve ticks later while walking a healthy course. The bound is
+    a parameter so the caller that knows the pace can size it -- and it still
+    fires, because it is a net, not a metronome."""
+    from cone_nav.guidance.route_exec import RouteCursor
+    from cone_nav.topology.topo_state import MAX_TRAVERSE_TICKS, TopoState
+
+    topo = TopoState(RouteCursor(["left"]), max_traverse_ticks=5)
+    assert topo.max_traverse_ticks == 5
+    assert TopoState(RouteCursor(["left"])).max_traverse_ticks \
+        == MAX_TRAVERSE_TICKS

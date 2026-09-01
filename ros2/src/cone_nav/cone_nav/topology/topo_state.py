@@ -170,11 +170,21 @@ class TopoState(object):
     """
 
     __slots__ = ("cursor", "state", "latched", "latched_turn", "live",
+                 "max_traverse_ticks",
                  "_confirm", "_seen", "_traverse_ticks", "blind_ticks", "note",
                  "travelled_m", "commit_range_m", "divider_xy", "axis_rad",
                  "_sightings")
 
-    def __init__(self, cursor):
+    def __init__(self, cursor, max_traverse_ticks=MAX_TRAVERSE_TICKS):
+        # The traverse safety net is a TIME bound sized for a driving car:
+        # 20 s crosses any mouth under power several times over. A hand-pushed
+        # dry run with measured odometry covers the same distance floor in
+        # minutes, honestly -- measured 2026-09-01: the floor cleared at tick
+        # 188 of 200 at walking pace, leaving twelve ticks to confirm the exit.
+        # So the bound is a parameter: the caller that knows the car is being
+        # pushed may size it for a push. It remains a bound, never the thing
+        # that ends a healthy traverse.
+        self.max_traverse_ticks = max_traverse_ticks
         self.cursor = cursor
         self.state = FOLLOW
         self.latched = None
@@ -309,7 +319,7 @@ class TopoState(object):
             self._reset("passed")
             return
 
-        if self._traverse_ticks >= MAX_TRAVERSE_TICKS:
+        if self._traverse_ticks >= self.max_traverse_ticks:
             # The corridor never came back. Keep the route entry -- the turn was
             # not demonstrably taken -- and stop steering on a stale latch.
             self._reset("traverse timed out; route entry kept")
