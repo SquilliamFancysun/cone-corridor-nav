@@ -414,13 +414,14 @@ def main(argv=None):
                     vesc.stop()
                     servo = vesc.last_servo
 
-            # What topo_state is told next tick. Under power it is open loop
-            # from the commanded duty -- see speed_ctrl.DUTY_TO_MPS on how
-            # little that number is worth and why it is still enough. In a dry
-            # run the duty is pinned to zero, so travel is MEASURED instead:
-            # scan-matched ego motion over the cone field, at whatever pace
-            # the car is actually being pushed, deadman or no deadman.
-            if args.dry_run:
+            # What topo_state is told next tick. Measured scan odometry
+            # whenever a step exists -- it does not care whether the wheels or
+            # a hand moved the car, and it replaced two generations of guesses
+            # in the dry run. Under power the old open-loop duty estimate
+            # (speed_ctrl.DUTY_TO_MPS, an admitted guess, least trustworthy at
+            # the cogging floor) survives only as the fallback for a tick with
+            # no cones in common between scans.
+            if odo_step is not None or args.dry_run:
                 travel_m, yaw_delta_rad = dry_run_travel(odo_step)
             else:
                 speed = duty_now * speed_ctrl.DUTY_TO_MPS
