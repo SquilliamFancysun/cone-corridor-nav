@@ -108,3 +108,30 @@ def test_a_clean_run_is_not_diagnosed_at_all(tmp_path, capsys):
     assert "too far back" not in out
     assert "ZERO reds" not in out
     assert "whole triples recovered" in out
+
+
+def test_the_expectations_scale_with_the_gap_the_track_was_laid_with(tmp_path, capsys):
+    """The v2 sheet's 1.35 m gaps assume lidar reach this car does not have;
+    a re-laid 1.10 m gate must not drown stage 3 in false CHECKs."""
+    path = tmp_path / "narrow.jsonl"
+    rows = [{"t": i * 0.1, "gate_live": True, "gate_reason": "",
+             "reds_seen": 3, "reds_in_view": 3, "gate_gaps_m": "1.10/1.10",
+             "red_gaps_m": "1.10/1.10", "gate_range_m": 2.0,
+             "topo_state": "approach", "branch_cones_dropped": 2}
+            for i in range(10)]
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    junction_report.main([str(path), "--expect-gap", "1.10"])
+    out = capsys.readouterr().out
+    assert "expect 1.10 +-0.05" in out
+    assert "OK    left  gap  1.10" in out
+    # And the window hints follow the gap: 1.10/tan(32.5) = 1.73 near.
+    assert "expect ~1.73" in out
+
+
+def test_the_too_far_back_message_names_the_laid_gap():
+    rows = rows_with(gate_detect.DISTANCE, 1, 3, gaps="1.10/1.10")
+    text = junction_report._diagnose_reds(rows, 1, 3, gate_detect.DISTANCE,
+                                          gap_m=1.10)
+    assert "1.10 m off the axis" in text
+    assert "2.79" in text          # sqrt(3.0^2 - 1.10^2)

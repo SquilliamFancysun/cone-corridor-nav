@@ -14,6 +14,7 @@ CHECK may still be fine, and a run it calls OK can still have driven badly.
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -27,12 +28,25 @@ if not os.path.isdir(os.path.join(_HERE, "cone_nav")):
 
 from cone_nav.topology import gate_detect
 
-# From data/layouts/junction_v2.md and the sim, for comparison only.
+# From data/layouts/junction_v2.md and the sim, for comparison only. The gap
+# is overridable because the buildable gate depends on the car: the v2 1.35 m
+# gaps assume ~3 m of lidar reach, and a car whose forward horizon is shorter
+# has to lay a narrower gate (measured 2026-08-31: horizon 2.55 m, joint
+# camera+lidar window at 1.35 m gaps EMPTY; at 1.10 m gaps, 1.73-2.30 m).
 EXPECT_LIVE_TICKS = 4          # 4.2 at 1.2 m/s; a pushed car should beat it
 EXPECT_GAP_M = 1.35
 GAP_TOLERANCE_M = 0.05
-EXPECT_FIRST_SEEN_M = 2.60
-EXPECT_LAST_SEEN_M = 2.10
+USABLE_HALF_FOV_DEG = 32.5     # camera half-FOV minus fusion's clip margin
+ARM_RANGE_M = 3.0              # gate_detect.GATE_ARM_RANGE_M
+
+
+def window_for(gap_m, horizon_m=ARM_RANGE_M):
+    """(near, far) of the joint camera+lidar window for a gap, in metres to
+    the red line. Near: the outer reds leave the camera frame. Far: their
+    slant range exceeds what the lidar resolves."""
+    near = gap_m / math.tan(math.radians(USABLE_HALF_FOV_DEG))
+    far = math.sqrt(max(0.0, min(horizon_m, ARM_RANGE_M) ** 2 - gap_m ** 2))
+    return near, far
 
 
 def load(path):
@@ -56,7 +70,7 @@ def mark(ok):
     return "OK   " if ok else "CHECK"
 
 
-def _diagnose_reds(rows, best, in_view, reason=""):
+def _diagnose_reds(rows, best, in_view, reason="", gap_m=EXPECT_GAP_M):
     """Why the triple never armed, and what to go and do about it.
 
     Keyed on `gate_reason` where the log carries one, because that string was
@@ -82,12 +96,13 @@ def _diagnose_reds(rows, best, in_view, reason=""):
                 "          red -- most likely the orange dead-end cone, which the\n"
                 "          v1 report confused 6% of the time. Check detect_view.py.")
     if reason == gate_detect.DISTANCE or (in_view >= 3 > best):
+        near, far = window_for(gap_m)
         return ("          All three reds WERE detected, but never all three\n"
                 "          inside the 3.0 m arm range at once. The car is too\n"
-                "          far back: the outer reds are 1.35 m off the axis, so\n"
-                "          all three are in range only within 2.68 m of the red\n"
-                "          line, and the camera loses them past 2.12 m. Stand\n"
-                "          the car between those two and try again.")
+                f"          far back: the outer reds are {gap_m:.2f} m off the axis,\n"
+                f"          so all three are in range only within {far:.2f} m of the\n"
+                f"          red line, and the camera loses them past {near:.2f} m.\n"
+                "          Stand the car between those two and try again.")
     if reason == gate_detect.GAPS:
         gaps = _worst_gaps(rows)
         measured = f" Measured {gaps[0]:.2f}/{gaps[1]:.2f}." if gaps else ""
@@ -148,7 +163,7 @@ def transitions(rows):
     return out
 
 
-def report(rows, path):
+def report(rows, path, expect_gap=EXPECT_GAP_M):
     if not rows:
         print(f"{path}: no ticks. The run wrote nothing.")
         return 1
@@ -164,12 +179,13 @@ def report(rows, path):
     print("  the junction was seen")
     print(f"    {mark(len(live) >= EXPECT_LIVE_TICKS)} whole triples recovered "
           f"{len(live):>4} ticks      expect >= {EXPECT_LIVE_TICKS}")
+    near, far = window_for(expect_gap)
     if live:
         first, last = live[0], live[-1]
         print(f"    ..... first seen at gate {first.get('gate_range_m', 0):.2f} m"
-              f"          expect ~{EXPECT_FIRST_SEEN_M:.2f}")
+              f"          expect ~{far:.2f}")
         print(f"    ..... last  seen at gate {last.get('gate_range_m', 0):.2f} m"
-              f"          expect ~{EXPECT_LAST_SEEN_M:.2f}")
+              f"          expect ~{near:.2f}")
     else:
         print("    ..... the triple was NEVER recovered.")
     if not live or any("reds_seen" in r for r in rows):
@@ -197,7 +213,7 @@ def report(rows, path):
             print(f"    ..... {count:>4} ticks  {reason}")
         if not live:
             print(_diagnose_reds(rows, best, in_view,
-                                 ranked[0][0] if ranked else ""))
+                                 ranked[0][0] if ranked else "", expect_gap))
 
     # Prefer the ticks that actually armed, but fall back to every tick that
     # measured three reds. The tape work is worth reporting on a run that
@@ -210,10 +226,10 @@ def report(rows, path):
         for index, label in ((0, "left  gap"), (1, "right gap")):
             values = [p[index] for p in pairs]
             mean = sum(values) / len(values)
-            ok = abs(mean - EXPECT_GAP_M) <= GAP_TOLERANCE_M
+            ok = abs(mean - expect_gap) <= GAP_TOLERANCE_M
             print(f"    {mark(ok)} {label} {mean:>5.2f} m  "
                   f"(min {min(values):.2f}, max {max(values):.2f})   "
-                  f"expect {EXPECT_GAP_M:.2f} +-{GAP_TOLERANCE_M:.2f}")
+                  f"expect {expect_gap:.2f} +-{GAP_TOLERANCE_M:.2f}")
     else:
         print("    ..... no gap readings -- three reds were never in view "
               "at once")
@@ -268,8 +284,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Stage-3 checks over a drive_junction.py trial log.")
     parser.add_argument("log", help="path to the JSONL written by --log")
+    parser.add_argument("--expect-gap", type=float, default=EXPECT_GAP_M,
+                        help="the gate gap the track was laid with, metres. "
+                             "The v2 sheet says 1.35; a car whose lidar "
+                             "horizon is short has to lay narrower, and the "
+                             "expectations above scale with it")
     args = parser.parse_args(argv)
-    return report(load(args.log), args.log)
+    return report(load(args.log), args.log, expect_gap=args.expect_gap)
 
 
 if __name__ == "__main__":
