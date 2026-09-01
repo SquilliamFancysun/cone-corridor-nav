@@ -14,7 +14,18 @@ CHECK may still be fine, and a run it calls OK can still have driven badly.
 
 import argparse
 import json
+import os
 import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if not os.path.isdir(os.path.join(_HERE, "cone_nav")):
+    _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
+    for _pkg in ("cone_perception", "cone_nav"):
+        _src = os.path.join(_REPO, "ros2", "src", _pkg)
+        if os.path.isdir(_src) and _src not in sys.path:
+            sys.path.insert(0, _src)
+
+from cone_nav.topology import gate_detect
 
 # From data/layouts/junction_v2.md and the sim, for comparison only.
 EXPECT_LIVE_TICKS = 4          # 4.2 at 1.2 m/s; a pushed car should beat it
@@ -45,31 +56,78 @@ def mark(ok):
     return "OK   " if ok else "CHECK"
 
 
-def _diagnose_reds(best):
-    """What a missing triple means depends on how many reds were seen at all.
+def _diagnose_reds(rows, best, in_view, reason=""):
+    """Why the triple never armed, and what to go and do about it.
 
-    Without this the two failures look identical in the log and they have
-    nothing to do with each other.
+    Keyed on `gate_reason` where the log carries one, because that string was
+    produced by the same `gate_detect.survey` call that made the decision, and a
+    diagnosis re-derived here from counts is a second opinion that can disagree
+    with the first. The count-based branches below are the fallback for logs
+    written before that field existed.
+
+    `best` is the most reds ever inside gate_detect's arm range; `in_view` is
+    the most ever detected at ANY range. The two differing is the diagnosis
+    easiest to mistake for a track fault -- the arm range is a SLANT range, so a
+    car 2.75 m from the red line has its outer reds at 3.06 m and counts one,
+    while three sit in plain view.
     """
-    if best == 0:
+    if in_view == 0 or reason == gate_detect.NO_REDS:
         return ("          ZERO reds at any point. The detector is not calling\n"
                 "          red at all -- wrong weights, or the cones read as\n"
                 "          orange. Check with detect_view.py before touching\n"
                 "          the track.")
-    if best < 3:
+    if reason == gate_detect.EXTRA or best > 3:
+        return (f"          {max(best, 4)} reds in range at once, and gate_detect\n"
+                "          wants EXACTLY three. Something else is being called\n"
+                "          red -- most likely the orange dead-end cone, which the\n"
+                "          v1 report confused 6% of the time. Check detect_view.py.")
+    if reason == gate_detect.DISTANCE or (in_view >= 3 > best):
+        return ("          All three reds WERE detected, but never all three\n"
+                "          inside the 3.0 m arm range at once. The car is too\n"
+                "          far back: the outer reds are 1.35 m off the axis, so\n"
+                "          all three are in range only within 2.68 m of the red\n"
+                "          line, and the camera loses them past 2.12 m. Stand\n"
+                "          the car between those two and try again.")
+    if reason == gate_detect.GAPS:
+        gaps = _worst_gaps(rows)
+        measured = f" Measured {gaps[0]:.2f}/{gaps[1]:.2f}." if gaps else ""
+        return ("          All three were seen together in range, but the gaps\n"
+                "          failed gate_detect's window. Both must be inside\n"
+                f"          0.6-2.5 m, and the span must exceed 2.5 m.{measured}")
+    if reason == gate_detect.CROWDED or best < 3:
         return ("          Reds ARE detected but never all three at once. One\n"
                 "          cone is merging with a neighbour in the lidar or\n"
                 "          leaving frame early: check the 0.4 m clear band\n"
                 "          around each red, and that the gaps are not > 1.40 m.")
-    return ("          All three were seen together, but the gaps failed\n"
-            "          gate_detect's window. Measure both gaps -- they must be\n"
-            "          inside 0.6-2.5 m, and the span must exceed 2.5 m.")
+    return ("          Three reds in range with good gaps, and still no gate.\n"
+            "          That is not a detection failure -- read the topo_state\n"
+            "          sequence below, and check the route file was loaded.")
 
 
-def gaps_of(rows):
+def _worst_gaps(rows):
+    """The gap pair furthest from the design value, for the message above.
+
+    `red_gaps_m` is measured whether or not the triple armed, which is what
+    makes it usable here -- `gate_gaps_m` exists only on ticks that succeeded,
+    and on a run being diagnosed there are none.
+    """
+    pairs = []
+    for row in rows:
+        text = row.get("red_gaps_m") or ""
+        try:
+            pairs.append(tuple(float(v) for v in text.split("/")))
+        except ValueError:
+            continue
+    pairs = [p for p in pairs if len(p) == 2]
+    if not pairs:
+        return None
+    return max(pairs, key=lambda p: max(abs(v - EXPECT_GAP_M) for v in p))
+
+
+def gaps_of(rows, field="gate_gaps_m"):
     out = []
     for row in rows:
-        text = row.get("gate_gaps_m") or ""
+        text = row.get(field) or ""
         try:
             left, right = (float(v) for v in text.split("/"))
         except ValueError:
@@ -116,13 +174,36 @@ def report(rows, path):
         print("    ..... the triple was NEVER recovered.")
     if not live or any("reds_seen" in r for r in rows):
         best = max((r.get("reds_seen", 0) for r in rows), default=0)
-        held = sum(1 for r in rows if r.get("reds_seen", 0) >= 3)
-        print(f"    ..... most reds seen at once {best}/3, on {held} tick(s) "
-              "all three")
+        in_view = max((r.get("reds_in_view", 0) for r in rows), default=0)
+        held = sum(1 for r in rows if r.get("reds_seen", 0) == 3)
+        print(f"    ..... most reds in arm range at once {best}, on "
+              f"{held} tick(s) exactly three")
+        if in_view:
+            print(f"    ..... most reds detected at ANY range {in_view}"
+                  + ("        <-- the car is standing too far back"
+                     if in_view > best else ""))
+        # Why gate_detect declined, straight from the same code path that
+        # declined. Counting them ranks the causes rather than reporting
+        # whichever happened to be last.
+        reasons = {}
+        for row in rows:
+            if row.get("gate_live"):
+                continue
+            reason = row.get("gate_reason") or ""
+            if reason:
+                reasons[reason] = reasons.get(reason, 0) + 1
+        ranked = sorted(reasons.items(), key=lambda kv: -kv[1])
+        for reason, count in ranked[:3]:
+            print(f"    ..... {count:>4} ticks  {reason}")
         if not live:
-            print(_diagnose_reds(best))
+            print(_diagnose_reds(rows, best, in_view,
+                                 ranked[0][0] if ranked else ""))
 
-    pairs = gaps_of(live)
+    # Prefer the ticks that actually armed, but fall back to every tick that
+    # measured three reds. The tape work is worth reporting on a run that
+    # recovered no triple at all -- on those runs it is the number that says
+    # whether to go and re-lay the gate or to go and stand somewhere else.
+    pairs = gaps_of(live, "gate_gaps_m") or gaps_of(rows, "red_gaps_m")
     print()
     print("  the car's own measurement of your tape work")
     if pairs:
@@ -134,7 +215,8 @@ def report(rows, path):
                   f"(min {min(values):.2f}, max {max(values):.2f})   "
                   f"expect {EXPECT_GAP_M:.2f} +-{GAP_TOLERANCE_M:.2f}")
     else:
-        print("    ..... no gap readings -- the triple was never recovered")
+        print("    ..... no gap readings -- three reds were never in view "
+              "at once")
 
     print()
     print("  the manoeuvre")

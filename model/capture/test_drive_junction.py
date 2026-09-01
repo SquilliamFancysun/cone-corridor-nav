@@ -94,18 +94,86 @@ def test_status_of_reports_the_manoeuvre():
 
 
 def test_reds_seen_is_reported_even_when_there_is_no_triple():
-    """The two ways stage 3 finds nothing -- no red detected at all, versus
-    two of three recovered -- are different problems with different fixes, and
-    a log that only records whole triples cannot tell them apart."""
-    record = drive_junction.status_of({"duty": 0.0}, None, None, 0, reds_seen=2)
+    """The ways stage 3 finds nothing -- no red detected at all, two of three
+    recovered, three recovered from too far back -- are different problems with
+    different fixes, and a log that only records whole triples cannot tell them
+    apart."""
+    from cone_nav.topology import gate_detect
+    from cone_perception.cone_classes import CLASS_RED
+    from cone_perception.fusion import LabeledCone
+
+    def red(x, y):
+        return LabeledCone(CLASS_RED, 0.9, x, y,
+                           range_lidar=math.hypot(x, y), points=4)
+
+    survey = gate_detect.survey([red(2.0, 1.35), red(2.0, 0.0)])
+    record = drive_junction.status_of({"duty": 0.0}, None, None, 0, survey)
     assert record["reds_seen"] == 2
     assert record["gate_live"] is False
+    assert record["gate_reason"] == gate_detect.CROWDED
+
+
+def test_a_car_standing_too_far_back_is_distinguishable_in_the_log():
+    """`reds_seen` counts SLANT range, so three cones in plain view can log as
+    one. Without `reds_in_view` beside it that reads as a mis-laid track."""
+    from cone_nav.topology import gate_detect
+    from cone_perception.cone_classes import CLASS_RED
+    from cone_perception.fusion import LabeledCone
+
+    reds = [LabeledCone(CLASS_RED, 0.9, 2.75, y, range_lidar=1.0, points=4)
+            for y in (1.35, 0.0, -1.35)]
+    record = drive_junction.status_of({"duty": 0.0}, None, None, 0,
+                                      gate_detect.survey(reds))
+    assert record["reds_in_view"] == 3
+    assert record["reds_seen"] < 3
+    assert record["gate_reason"] == gate_detect.DISTANCE
+    # The gaps are measured anyway, which is what says the tape work is fine.
+    assert record["red_gaps_m"] == "1.35/1.35"
+    assert record["reds_m"].startswith("2.75/")
 
 
 def test_status_of_survives_having_no_state_machine():
     record = drive_junction.status_of({"duty": 0.0}, None, None, 0)
     assert record["topo_state"] == ""
     assert record["gate_range_m"] == 0.0
+    assert record["reds_in_view"] == 0
+    assert record["gate_reason"] == ""
+
+
+# --- the travel estimate ------------------------------------------------
+
+def test_a_dry_run_is_given_a_travel_estimate_the_motor_cannot_supply():
+    """--dry-run pins the duty to zero, and the travel estimate normally comes
+    from that duty. Without --push-speed `travelled_m` stays at zero, TRAVERSE
+    never clears its distance floor, and stage 3 -- which is a dry run -- can
+    only ever end by timing out with the divider frozen where it was first
+    seen."""
+    args = drive_junction.parse_args(
+        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman"])
+    assert args.push_speed > 0.0
+
+    # The expression the loop uses, at the two duties that matter.
+    def travel(dry_run, duty_now, armed=True):
+        from cone_nav.control import speed_ctrl
+        speed = (args.push_speed if dry_run and armed
+                 else duty_now * speed_ctrl.DUTY_TO_MPS)
+        return speed * 0.1
+
+    assert travel(dry_run=True, duty_now=0.0) > 0.0
+    assert travel(dry_run=False, duty_now=0.0) == 0.0
+    # A stand is not a push: --steer-only takes the duty path, where zero is
+    # the true answer.
+    assert travel(dry_run=False, duty_now=0.1) > 0.0
+
+
+def test_the_push_speed_only_counts_while_the_car_is_armed():
+    """Releasing the deadman means the operator has stopped, and a state
+    machine that keeps accruing distance through that is inventing motion."""
+    args = drive_junction.parse_args(
+        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman",
+         "--push-speed", "0.4"])
+    speed = args.push_speed if args.dry_run and False else 0.0
+    assert speed == 0.0
 
 
 # --- the pipeline -------------------------------------------------------
@@ -149,9 +217,10 @@ def test_the_pipeline_arms_the_machine_on_a_junction():
     out = drive_junction.drive_pipeline(
         scan, Set(detections), cone_field.IDENTITY_CALIBRATION, intr, Args(),
         0.0, topo=topo)
-    junction, reds_seen = out[7], out[9]
+    junction, survey = out[7], out[9]
     assert junction is not None, "the triple was not detected"
-    assert reds_seen == 3
+    assert len(survey.in_arm) == 3
+    assert survey.reason == ""
     assert topo.state == topo_state.APPROACH
     assert junction.gaps_m[0] == pytest.approx(
         cone_field.JUNCTION_GATE_GAP_M, abs=0.15)

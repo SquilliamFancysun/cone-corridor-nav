@@ -9,7 +9,7 @@ half, the VESC driver, the deadman, the trial log and every argument are
 imported from it rather than restated, so there is one definition of each. What
 this file adds is three lines in the middle of the pipeline:
 
-    junction = gate_detect.detect(cones)          # a red triple in range?
+    junction = gate_detect.survey(cones).junction  # a red triple in range?
     cones    = junction_exec.keep_branch(...)     # drop the other branch
     line     = junction_exec.junction_line(...)   # aim at the gate
 
@@ -57,7 +57,6 @@ import oakd
 from cone_nav.control import pure_pursuit, speed_ctrl
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
-from cone_nav.corridor.boundary_split import split
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_nav.guidance import junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
@@ -89,6 +88,10 @@ JUNCTION_STATUS_SCHEMA = {
         route_remaining={"type": "integer"},
         gate_live={"type": "boolean", "description": "a whole triple seen THIS tick"},
         reds_seen={"type": "integer", "description": "red cones in arm range, whether or not they formed a triple"},
+        reds_in_view={"type": "integer", "description": "red cones at ANY range. Above reds_seen means the car is too far back"},
+        reds_m={"type": "string", "description": "range to every red, nearest first"},
+        red_gaps_m={"type": "string", "description": "the two gaps between three reds, measured whether or not they armed"},
+        gate_reason={"type": "string", "description": "why no triple this tick"},
         gate_range_m={"type": "number", "description": "to the chosen gate midpoint"},
         gate_gaps_m={"type": "string", "description": "the two measured gate widths"},
         branch_cones_dropped={"type": "integer"},
@@ -128,13 +131,13 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                               max_detection_age_s=args.max_detection_age)
 
     cones, filled = result.cones, 0
-    junction = gate_detect.detect(result.cones, axis_rad=axis_rad)
-    # Counted separately from `junction`, because "saw two reds and one merged
-    # into a branch cone" and "saw no red at all" are different problems with
-    # different fixes, and a log that only records whole triples cannot tell
-    # them apart. This is the first number to read when stage 3 finds nothing.
-    reds_seen = sum(1 for c in split(result.cones).gates
-                    if math.hypot(c.x, c.y) <= gate_detect.GATE_ARM_RANGE_M)
+    # Surveyed rather than merely detected, because "saw two reds and one merged
+    # into a branch cone", "saw no red at all" and "saw all three from a metre
+    # too far back" are different problems with different fixes, and a log that
+    # only records whole triples cannot tell them apart. `survey.reason` is the
+    # first field to read when stage 3 finds nothing.
+    survey = gate_detect.survey(result.cones, axis_rad=axis_rad)
+    junction = survey.junction
     if topo is not None:
         topo.update(junction, previous_line, travel_m=travel_m,
                     yaw_delta_rad=yaw_delta_rad)
@@ -172,10 +175,10 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                                           extrinsics.WHEELBASE_M, origin=axle)
     duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
-            junction, dropped, reds_seen)
+            junction, dropped, survey)
 
 
-def status_of(base, topo, junction, dropped, reds_seen=0):
+def status_of(base, topo, junction, dropped, survey=None):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
     live = topo.live if topo else None
@@ -189,7 +192,13 @@ def status_of(base, topo, junction, dropped, reds_seen=0):
         route_index=topo.cursor.index if topo else 0,
         route_remaining=topo.cursor.remaining if topo else 0,
         gate_live=live is not None,
-        reds_seen=reds_seen,
+        reds_seen=len(survey.in_arm) if survey else 0,
+        reds_in_view=len(survey.reds) if survey else 0,
+        reds_m=("/".join("%.2f" % r for r in survey.ranges_m)
+                if survey else ""),
+        red_gaps_m=("%.2f/%.2f" % survey.gaps_m
+                    if survey and survey.gaps_m else ""),
+        gate_reason=survey.reason if survey else "",
         gate_range_m=round(topo.junction.range_for(turn), 3)
         if topo and topo.junction is not None and turn else 0.0,
         gate_gaps_m=gaps,
@@ -205,6 +214,14 @@ def parse_args(argv=None):
     parser.add_argument("--route", required=True,
                         help="path to a route file: one 'left' or 'right' per "
                              "junction, in order. See data/routes/")
+    parser.add_argument("--push-speed", type=float, default=0.5,
+                        help="metres per second to ASSUME the car is being "
+                             "pushed at, during --dry-run only. The travel "
+                             "estimate normally comes from the commanded duty, "
+                             "which a dry run pins to zero -- so without this "
+                             "the manoeuvre can never clear its distance floor "
+                             "and stage 3 can only ever time out. An "
+                             "assumption, not a measurement")
     parser.add_argument("--fill-range-at-junction", type=float, default=1.0,
                         help="metres. While a junction is engaged, geometric "
                              "side assignment is pulled in to this range, so an "
@@ -327,7 +344,7 @@ def main(argv=None):
 
             detection_set = detector_thread.latest()
             (result, cones, filled, line, pursuit, duty, corridor_line,
-             junction, dropped, reds_seen) = drive_pipeline(
+             junction, dropped, survey) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
                 yaw_delta_rad=yaw_delta_rad)
@@ -356,7 +373,19 @@ def main(argv=None):
             # What topo_state is told next tick. Open loop, from the duty the
             # car was just given -- see speed_ctrl.DUTY_TO_MPS on how little
             # that number is worth and why it is still enough here.
-            speed = duty_now * speed_ctrl.DUTY_TO_MPS
+            #
+            # Except in a dry run, where the duty is pinned to zero and that
+            # estimate is therefore zero on every tick -- so `travelled_m` never
+            # rises, TRAVERSE never clears its distance floor, and the manoeuvre
+            # can only ever end by timing out 20 s later with the divider still
+            # frozen where it was first seen. Stage 3 of docs/junction-bringup.md
+            # is a dry run and expects one clean pass, so a pushed car needs a
+            # travel estimate that does not come from the motor. --push-speed is
+            # that estimate. It is an assumption about the person pushing, not a
+            # measurement, and it is confined to --dry-run: --steer-only runs on
+            # a stand where the true answer is zero.
+            speed = (args.push_speed if args.dry_run and armed
+                     else duty_now * speed_ctrl.DUTY_TO_MPS)
             travel_m = speed * scan_age
             delta = pursuit.delta_rad if pursuit is not None else 0.0
             yaw_delta_rad = (travel_m * math.tan(delta)
@@ -369,7 +398,7 @@ def main(argv=None):
                 result, cones, filled, line, pursuit, duty, servo, armed, args,
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
-            status = status_of(base, topo, junction, dropped, reds_seen)
+            status = status_of(base, topo, junction, dropped, survey)
 
             wall = time.time()
             if sinks.available:
@@ -404,10 +433,21 @@ def main(argv=None):
             if now - last_report >= 1.0:
                 last_report = now
                 flag = "ARMED " if armed else "idle  "
+                # The reds line is what stage 3 is actually watching, so it says
+                # where they are and why they did not arm rather than only how
+                # many were countable. Standing still in front of the mouth,
+                # this is the whole diagnosis without opening the log.
+                reds = f"reds {len(survey.in_arm)}/{len(survey.reds)}"
+                if survey.reds:
+                    reds += " @ " + status["reds_m"] + " m"
+                if survey.gaps_m:
+                    reds += f"  gaps {status['red_gaps_m']}"
+                if survey.reason:
+                    reds += f"  [{survey.reason}]"
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
-                      f"{topo.state} reds {reds_seen}/3"
+                      f"{topo.state} {reds}"
                       + (f"/{topo.turn}" if topo.engaged else "")
                       + (f"  [{duty.reason}]" if duty.reason else ""))
     except KeyboardInterrupt:

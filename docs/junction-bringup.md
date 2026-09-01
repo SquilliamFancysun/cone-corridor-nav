@@ -90,6 +90,34 @@ python drive_junction.py --weights ~/models/best.pt \
     --dry-run --no-deadman --log junction-see.jsonl
 ```
 
+### Where the car has to be standing
+
+Detection needs no motion at all -- `gate_detect.survey` is a pure function of
+one revolution, so a car parked in the right place reports the gate on every
+tick. But "the right place" is a band only half a metre deep, and both of its
+edges are set by the outer reds sitting 1.35 m off the axis:
+
+| Limit | Distance to the red line | Set by |
+|---|---|---|
+| Too far | **2.68 m** | `GATE_ARM_RANGE_M` is a SLANT range, and the outer reds reach 3.0 m here |
+| Too close | **2.12 m** | The outer reds leave the camera frame and come back UNLABELED |
+
+Park at 3 m and you get **nothing**, with `reds_seen: 1` in the log -- the
+centre cone alone -- while all three sit in plain view. Stand the car at about
+2.4 m and confirm a gate before you push anything: a static reading is the
+cleanest measurement of the track you will get, and it separates a layout fault
+from a timing one.
+
+The once-a-second line says which case you are in without opening the log:
+
+```
+  idle   duty 0.000  steer   +0.0 deg  4 pts, reach 2.10 m  follow \
+         reds 1/3 @ 2.75/3.06/3.06 m  gaps 1.35/1.35  [reds in view, not all three in range]
+```
+
+Three reds at 3.06 m with correct gaps is a car standing too far back, not a
+mis-laid gate.
+
 `--dry-run` never opens the VESC. Watch the state line — it prints on every
 transition — and expect exactly one `follow → approach → traverse → follow`.
 
@@ -107,12 +135,21 @@ fine, and one it calls `OK` can still have driven badly.
 
 | What to check | Expect | If not |
 |---|---|---|
-| Ticks with `gate_live` true | **≥ 4** (the sim gets 4.2 at 1.2 m/s; walking pace gives more) | Stage 1 is wrong. Measure the gaps and the clear band again |
+| Ticks with `gate_live` true | **≥ 4** (the sim gets 4.2 at 1.2 m/s; walking pace gives more) | Read `gate_reason` first — it names the cause. Only then measure the gaps and the clear band |
+| `reds_in_view` vs `reds_seen` | equal | `reds_in_view` higher means the car never got inside 2.68 m of the red line |
 | `gate_gaps_m` | ≈ `1.35/1.35`, both within 0.05 | This is the car measuring your tape work. Believe it over the tape |
 | `gate_range_m` when first live | ≈ 2.6 m, falling to ≈ 2.1 m | A much shorter span means one red is being missed |
 | `topo_state` sequence | one clean pass | Two `traverse` blocks means it re-armed on the same junction |
 | `branch_cones_dropped` during `traverse` | **> 0** | The filter never bit; the car would be choosing its own branch |
-| `topo_note` | `passed` once | `traverse timed out` means it never saw a corridor on the far side |
+| `topo_note` | `passed` once | `traverse timed out` means it never saw a corridor on the far side — or that `--push-speed` is far below the pace you actually walked |
+
+`--push-speed` is what makes the manoeuvre half of this stage testable. A dry
+run pins the commanded duty to zero, and the travel estimate normally comes from
+that duty, so without it `travelled_m` stays at zero, TRAVERSE never clears its
+distance floor, and the run can only ever end by timing out 20 s later with the
+branch filter cutting on a divider frozen where it was first seen. It defaults
+to 0.5 m/s; pass the pace you actually walk. It is an assumption about you, not
+a measurement of the car, and it is ignored outside `--dry-run`.
 
 If `gate_live` is never true, stop and fix the track. Nothing downstream can
 recover from a junction the car cannot see, and the failure mode is that it

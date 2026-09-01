@@ -117,6 +117,12 @@ DRIVE_STATUS_SCHEMA = {
         "cones": {"type": "integer"},
         "labeled_by_camera": {"type": "integer"},
         "labeled_by_geometry": {"type": "integer"},
+        "candidates": {"type": "integer", "description": "lidar clusters offered to fusion"},
+        "detections": {"type": "integer", "description": "boxes offered to fusion"},
+        "out_of_fov": {"type": "integer", "description": "clusters the camera structurally could not see"},
+        "unmatched_in_fov": {"type": "integer", "description": "clusters IN frame that got no box -- a detector miss or a bearing error"},
+        "unmatched_detections": {"type": "integer", "description": "boxes no cluster claimed"},
+        "detections_stale": {"type": "boolean", "description": "the boxes were older than max_detection_age"},
         "centerline_points": {"type": "integer"},
         "single_boundary_fallback": {"type": "boolean"},
         "scan_age_s": {"type": "number"},
@@ -352,6 +358,20 @@ def status_of(result, cones, filled, line, pursuit, duty, servo, armed, args,
         "cones": len(cones),
         "labeled_by_camera": result.matched,
         "labeled_by_geometry": filled,
+        # fusion.py's own diagnostic counters, which its docstring promises the
+        # harness reports. fusion_view.py logs them to Foxglove; they belong in
+        # the trial log too, because a cone that is missing from the scene and a
+        # cone that is present but unlabelled are different faults with
+        # different fixes and `labeled_by_camera` alone cannot separate them.
+        # `unmatched_in_fov` is the one to read first: a cluster the camera
+        # could see and did not explain is a detector miss or a bearing error,
+        # and nothing else in the record says so.
+        "candidates": result.candidates,
+        "detections": result.detections,
+        "out_of_fov": result.out_of_fov,
+        "unmatched_in_fov": result.unmatched_in_fov,
+        "unmatched_detections": result.unmatched_detections,
+        "detections_stale": bool(result.stale),
         "centerline_points": len(line.points),
         "single_boundary_fallback": bool(line.single_boundary_fallback),
         "scan_age_s": round(scan_age, 3),

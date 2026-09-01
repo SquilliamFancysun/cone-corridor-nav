@@ -16,9 +16,15 @@ from cone_nav.corridor.centerline import (
     midpoint_graph,
 )
 from cone_nav.topology.gate_detect import (
+    CROWDED,
+    DISTANCE,
+    EXTRA,
+    GAPS,
     GATE_ARM_RANGE_M,
+    NO_REDS,
     detect,
     fit_axis,
+    survey,
 )
 from cone_perception.cone_classes import (
     CLASS_BLUE,
@@ -215,3 +221,61 @@ def test_gate_detect_does_not_read_its_reds_from_the_centerline():
     """
     assert midpoint_graph(triple()) == ([], {})
     assert detect(triple()) is not None
+
+
+# --- the survey, which is what the trial log carries ---------------------
+
+def test_the_survey_and_the_detector_never_disagree():
+    """`detect` is a wrapper over `survey`, and this is the property that makes
+    that worth doing: the reason recorded in the log is the reason for THIS
+    tick's decision, not a second opinion computed alongside it."""
+    for cones in (triple(2.0, 1.35), triple(2.0, 0.2), triple(4.0, 1.35),
+                  triple(2.75, 1.35), triple(2.0, 1.35) + [cone(1.0, 0.3)],
+                  [], [cone(1.0, 0.0)]):
+        found, decided = survey(cones).junction, detect(cones)
+        assert (found is None) == (decided is None)
+        if found is not None:
+            assert found.gaps_m == pytest.approx(decided.gaps_m)
+            assert found.left_gate == pytest.approx(decided.left_gate)
+            assert found.right_gate == pytest.approx(decided.right_gate)
+        # A reason is recorded exactly when there is no junction, so a log can
+        # never show a rejection with no cause or a gate with a complaint.
+        assert bool(survey(cones).reason) == (found is None)
+
+
+def test_a_car_too_far_back_is_told_so_rather_than_blamed_on_the_track():
+    """The arm range is a SLANT range. An outer red 1.35 m off the axis is
+    3.06 m away when the red line is only 2.75 m ahead, so all three cones can
+    be in plain view with one of them countable -- which reads as a mis-laid
+    track unless the survey says otherwise."""
+    found = survey(triple(2.75, 1.35))
+    assert found.junction is None
+    assert found.reason == DISTANCE
+    assert len(found.reds) == 3
+    assert len(found.in_arm) < 3
+    # ...and the gaps are still measured, which is what proves the tape work is
+    # fine and only the standing position is wrong.
+    assert found.gaps_m == pytest.approx((1.35, 1.35), abs=0.01)
+
+
+def test_the_gaps_are_measured_even_when_they_are_what_failed():
+    found = survey(triple(2.0, 0.25))
+    assert found.junction is None
+    assert found.reason == GAPS
+    assert found.gaps_m == pytest.approx((0.25, 0.25), abs=0.01)
+
+
+def test_the_four_reasons_are_distinct():
+    assert survey([]).reason == NO_REDS
+    assert survey([cone(1.0, 0.0), cone(1.0, 1.0)]).reason == CROWDED
+    assert survey(triple(2.0, 1.35) + [cone(1.0, 0.2)]).reason == EXTRA
+    assert survey(triple(2.75, 1.35)).reason == DISTANCE
+    assert survey(triple(2.0, 0.25)).reason == GAPS
+    assert survey(triple(2.0, 1.35)).reason == ""
+
+
+def test_the_survey_reports_every_red_by_range_nearest_first():
+    found = survey(triple(2.0, 1.35))
+    assert len(found.ranges_m) == 3
+    assert found.ranges_m == sorted(found.ranges_m)
+    assert found.ranges_m[0] == pytest.approx(2.0, abs=0.01)

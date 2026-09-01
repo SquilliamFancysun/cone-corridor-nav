@@ -42,6 +42,19 @@ history.
 
 The caller's heading is still used to ORDER the three cones left-to-right,
 where a coarse axis is plenty and the fit is not yet available.
+
+## Why `survey` exists and `detect` is written in terms of it
+
+"No junction this tick" has four causes -- no reds at all, reds in view but not
+all three inside the arm range, a fourth red, and three reds whose gaps miss the
+pair window -- and they have four unrelated fixes. A boolean cannot tell them
+apart, and neither can a count: the arm range is a SLANT range, so a car parked
+2.75 m from the red line has its outer reds at 3.06 m and reports one red in
+range while three sit in plain view.
+
+`survey` returns the reason alongside the answer, and `detect` is a one-line
+wrapper over it, so the diagnosis in the trial log is produced by the same code
+path as the decision and cannot drift away from it.
 """
 
 import math
@@ -53,6 +66,46 @@ from cone_nav.corridor.centerline import MAX_PAIR_EDGE_M, MIN_PAIR_EDGE_M
 # in cone_perception/clustering.py), so a "red" out here is one return and a
 # hope. Arming a junction manoeuvre on that is worse than arming late.
 GATE_ARM_RANGE_M = 3.0
+
+# Why `detect` declined, in the words the trial log carries. Short enough to sit
+# in a column, specific enough to name the fix: DISTANCE sends you to where the
+# car is standing, CROWDED to the clear band around each red, EXTRA to the
+# detector, GAPS to the tape.
+NO_REDS = "no reds"
+DISTANCE = "reds in view, not all three in range"
+CROWDED = "fewer than three reds"
+EXTRA = "more than three reds in range"
+GAPS = "gaps outside the pair window"
+
+
+class RedSurvey(object):
+    """Every red in the scene, what `detect` made of them, and why.
+
+    `reds` is all of them out to `boundary_split`'s range cut; `in_arm` is the
+    subset `detect` is allowed to build a gate from. The two differing is the
+    single most useful thing this record says, because it separates a track the
+    car cannot see from a car standing in the wrong place, and those look
+    identical in a count of recovered triples.
+    """
+
+    __slots__ = ("reds", "in_arm", "gaps_m", "junction", "reason")
+
+    def __init__(self, reds, in_arm, gaps_m, junction, reason):
+        self.reds = reds
+        self.in_arm = in_arm
+        self.gaps_m = gaps_m
+        self.junction = junction
+        self.reason = reason
+
+    @property
+    def ranges_m(self):
+        """Range to every red, nearest first. `split` already sorted them."""
+        return [math.hypot(c.x, c.y) for c in self.reds]
+
+    def __repr__(self):
+        gaps = ("%.2f/%.2f" % self.gaps_m) if self.gaps_m else "-"
+        return (f"RedSurvey({len(self.in_arm)}/{len(self.reds)} in range, "
+                f"gaps {gaps}, {self.reason or 'detected'})")
 
 
 class Junction(object):
@@ -142,9 +195,9 @@ def fit_axis(cones, default_rad=0.0):
     return math.atan2(math.sin(normal_rad), math.cos(normal_rad))
 
 
-def detect(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
+def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
            max_gap_m=MAX_PAIR_EDGE_M, arm_range_m=GATE_ARM_RANGE_M):
-    """LabeledCones -> Junction, or None if this is not a junction.
+    """LabeledCones -> RedSurvey: the junction if there is one, and why if not.
 
     `min_gap_m` and `max_gap_m` default to `centerline`'s own pair-edge window
     rather than to fresh constants, so a gate this module accepts is a gate
@@ -152,26 +205,63 @@ def detect(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
     junction is deliberately WIDER than `MAX_PAIR_EDGE_M`, which is what stops
     the triangulation putting a spurious gate midpoint on the centre cone --
     see `data/layouts/junction_v2.md`.
+
+    Never raises and never returns None. A tick with no reds in it is a normal
+    tick on a corridor, and most ticks of any run are that.
     """
-    reds = [c for c in split(cones).gates
-            if math.hypot(c.x, c.y) <= arm_range_m]
-    if len(reds) != 3:
-        return None
+    reds = split(cones).gates
+    in_arm = [c for c in reds if math.hypot(c.x, c.y) <= arm_range_m]
 
-    fitted = fit_axis(reds, default_rad=axis_rad)
-    # Order left to right across the mouth. Sorting on the fitted axis rather
-    # than the caller's keeps the ordering correct when the car meets the gate
-    # mid-turn, which is the normal case at the second junction of a route.
-    left, centre, right = sorted(reds, key=lambda c: _offset(c, fitted),
-                                 reverse=True)
+    # Gaps are measured off whichever three reds are available, in arm range
+    # for preference but in view otherwise. That second case is the whole point
+    # of measuring them here rather than only on success: a car standing a metre
+    # too far back sees three perfectly good reds and recovers no triple, and
+    # the gaps are what prove the track is laid right and the RANGE is the
+    # problem. Measured on more or fewer than three there is no gate to measure.
+    triple = in_arm if len(in_arm) == 3 else (reds if len(reds) == 3 else None)
+    gaps, junction = None, None
+    if triple is not None:
+        fitted = fit_axis(triple, default_rad=axis_rad)
+        # Order left to right across the mouth. Sorting on the fitted axis
+        # rather than the caller's keeps the ordering correct when the car meets
+        # the gate mid-turn, which is the normal case at the second junction of
+        # a route.
+        left, centre, right = sorted(triple, key=lambda c: _offset(c, fitted),
+                                     reverse=True)
+        gaps = (_distance(left, centre), _distance(centre, right))
+        if len(in_arm) == 3 and all(min_gap_m <= g <= max_gap_m for g in gaps):
+            junction = Junction(
+                left=left, centre=centre, right=right,
+                left_gate=_midpoint(left, centre),
+                right_gate=_midpoint(centre, right),
+                axis_rad=fitted,
+            )
 
-    for gap in (_distance(left, centre), _distance(centre, right)):
-        if not min_gap_m <= gap <= max_gap_m:
-            return None
+    if junction is not None:
+        reason = ""
+    elif not reds:
+        reason = NO_REDS
+    elif len(in_arm) > 3:
+        reason = EXTRA
+    elif len(reds) >= 3:
+        # Three or more exist; if they are not all in range the car is too far
+        # back, and if they are then a gap failed.
+        reason = DISTANCE if len(in_arm) < 3 else GAPS
+    else:
+        reason = CROWDED
 
-    return Junction(
-        left=left, centre=centre, right=right,
-        left_gate=_midpoint(left, centre),
-        right_gate=_midpoint(centre, right),
-        axis_rad=fitted,
-    )
+    return RedSurvey(reds=reds, in_arm=in_arm, gaps_m=gaps,
+                     junction=junction, reason=reason)
+
+
+def detect(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
+           max_gap_m=MAX_PAIR_EDGE_M, arm_range_m=GATE_ARM_RANGE_M):
+    """LabeledCones -> Junction, or None if this is not a junction.
+
+    The decision half of `survey`, kept as its own name because that is what
+    every caller that only has to STEER wants. Written as a wrapper rather than
+    as a second implementation so the reason logged for a rejection is always
+    the reason for this tick's rejection.
+    """
+    return survey(cones, axis_rad=axis_rad, min_gap_m=min_gap_m,
+                  max_gap_m=max_gap_m, arm_range_m=arm_range_m).junction

@@ -265,3 +265,39 @@ def test_it_falls_back_to_the_positional_name_when_by_id_is_absent():
         assert drive_corridor.default_vesc_port() == drive_corridor.FALLBACK_VESC_PORT
     finally:
         _os.path.exists = real
+
+
+def test_the_status_record_carries_fusions_own_diagnostic_counters():
+    """fusion.py promises "the harness reports matched/unmatched counts so that
+    shows up immediately", and fusion_view.py keeps that promise to Foxglove.
+    The trial log is the other half: a cone missing from the scene and a cone
+    present but unlabelled are different faults, and `labeled_by_camera` alone
+    cannot separate them."""
+    counters = {"candidates", "detections", "out_of_fov", "unmatched_in_fov",
+                "unmatched_detections", "detections_stale"}
+    assert counters <= set(drive_corridor.DRIVE_STATUS_SCHEMA["properties"])
+
+    from cone_perception.fusion import FusionResult
+
+    result = FusionResult(cones=[], candidates=9, detections=4, matched=3,
+                          out_of_fov=5, unmatched_in_fov=1,
+                          unmatched_detections=1, detection_age_s=0.05,
+                          stale=False)
+
+    class Line(object):
+        points = [(1.0, 0.0), (2.0, 0.0)]
+        single_boundary_fallback = False
+
+    class Duty(object):
+        duty, reason, reach_m = 0.1, "", 2.0
+
+    record = drive_corridor.status_of(
+        result, [], 0, Line(), None, Duty(), 0.5, True,
+        drive_corridor.parse_args(["--dry-run", "--no-deadman"]),
+        0.1, 0.05, 10.0)
+    assert record["candidates"] == 9
+    assert record["unmatched_in_fov"] == 1
+    assert record["unmatched_detections"] == 1
+    assert record["out_of_fov"] == 5
+    assert record["detections_stale"] is False
+    assert set(record) <= set(drive_corridor.DRIVE_STATUS_SCHEMA["properties"])
