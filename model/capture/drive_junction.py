@@ -61,7 +61,7 @@ from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_nav.guidance import junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
 from cone_nav.topology import gate_detect, topo_state
-from cone_perception import clustering, extrinsics, fusion
+from cone_perception import clustering, ego_motion, extrinsics, fusion
 from drive_corridor import (
     DEFAULT_PORT_WS,
     MAX_SCAN_AGE_S,
@@ -96,7 +96,9 @@ JUNCTION_STATUS_SCHEMA = {
         gate_gaps_m={"type": "string", "description": "the two measured gate widths"},
         branch_cones_dropped={"type": "integer"},
         blind_ticks={"type": "integer", "description": "ticks since the last triple"},
-        travelled_m={"type": "number", "description": "since commit; a duty estimate"},
+        travelled_m={"type": "number", "description": "since commit"},
+        odo_forward_m={"type": "number", "description": "this tick's scan-matched travel; the dry run's odometry"},
+        odo_pairs={"type": "integer", "description": "cones the odometry step was fitted on; 0 = no measurement"},
         topo_note={"type": "string"},
     ),
 }
@@ -229,14 +231,6 @@ def parse_args(argv=None):
     parser.add_argument("--route", required=True,
                         help="path to a route file: one 'left' or 'right' per "
                              "junction, in order. See data/routes/")
-    parser.add_argument("--push-speed", type=float, default=0.5,
-                        help="metres per second to ASSUME the car is being "
-                             "pushed at, during --dry-run only. The travel "
-                             "estimate normally comes from the commanded duty, "
-                             "which a dry run pins to zero -- so without this "
-                             "the manoeuvre can never clear its distance floor "
-                             "and stage 3 can only ever time out. An "
-                             "assumption, not a measurement")
     parser.add_argument("--fill-range-at-junction", type=float, default=1.0,
                         help="metres. While a junction is engaged, geometric "
                              "side assignment is pulled in to this range, so an "
@@ -258,22 +252,34 @@ def parse_args(argv=None):
     return args
 
 
+def dry_run_travel(step, deadband_m=ego_motion.DEADBAND_M):
+    """(travel_m, yaw_delta_rad) for the state machine, from a measured Step.
+
+    The dry run's odometry. Replaces two generations of fiction: the duty
+    estimate (identically zero with the throttle pinned) and an assumed push
+    speed (exactly as honest as the operator's pace was close to it --
+    measured 0.13 m/s against an assumed 0.5 on 2026-09-01, which declared
+    the junction passed 1.94 m before the gate). The deadband stops cluster
+    jitter from random-walking `travelled_m` upward while the car stands
+    still, since `topo_state` clamps negative travel.
+
+    None -- no cones in common between scans -- reads as no motion, the same
+    safe convention an empty centerline gets.
+    """
+    if step is None:
+        return 0.0, 0.0
+    travel = step.forward_m if abs(step.forward_m) > deadband_m else 0.0
+    return travel, step.yaw_rad
+
+
 def announce(args):
     turns = ", ".join(args.route_turns)
     print(f"route     {len(args.route_turns)} junction(s): {turns}")
     print(f"           from {args.route}")
-    if args.dry_run and args.no_deadman:
-        print(f"warning:  --no-deadman: travel is assumed at {args.push_speed} "
-              "m/s CONTINUOUSLY, moving or not.\n"
-              "          The carried divider, the axis and the exit-distance "
-              "floor are fiction\n"
-              "          whenever your pace differs -- a paused car burns the "
-              "traverse budget\n"
-              "          and a resumed one cuts the exit corridor on a stale "
-              "divider. For a\n"
-              "          pushed stage-3 run, switch the F710 on, drop "
-              "--no-deadman, and hold X\n"
-              "          exactly while the car is actually moving.")
+    if args.dry_run:
+        print("dry run   travel is MEASURED by scan matching over the cones; "
+              "push at any pace,\n          pause freely. No push-speed "
+              "assumption is in play.")
 
 
 def main(argv=None):
@@ -342,6 +348,8 @@ def main(argv=None):
     duty_now = 0.0
     steer_history = []
     previous_line = None
+    previous_cones = None
+    odo_step = None
     travel_m = 0.0
     yaw_delta_rad = 0.0
     last_scan_at = started
@@ -378,6 +386,14 @@ def main(argv=None):
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
+            # Scan-matched odometry, fed to topo_state NEXT tick -- the same
+            # one-tick feedback previous_line and axis_rad already use. The
+            # pre-fill cone list is the feature set: unlabeled clusters are
+            # landmarks too, and the fill's repainting never moves a point.
+            odo_step = (ego_motion.rigid_step(previous_cones, result.cones)
+                        if previous_cones is not None else None)
+            previous_cones = result.cones
+
             target_duty = duty.duty
             if not armed:
                 target_duty = 0.0
@@ -397,26 +413,20 @@ def main(argv=None):
                     vesc.stop()
                     servo = vesc.last_servo
 
-            # What topo_state is told next tick. Open loop, from the duty the
-            # car was just given -- see speed_ctrl.DUTY_TO_MPS on how little
-            # that number is worth and why it is still enough here.
-            #
-            # Except in a dry run, where the duty is pinned to zero and that
-            # estimate is therefore zero on every tick -- so `travelled_m` never
-            # rises, TRAVERSE never clears its distance floor, and the manoeuvre
-            # can only ever end by timing out 20 s later with the divider still
-            # frozen where it was first seen. Stage 3 of docs/junction-bringup.md
-            # is a dry run and expects one clean pass, so a pushed car needs a
-            # travel estimate that does not come from the motor. --push-speed is
-            # that estimate. It is an assumption about the person pushing, not a
-            # measurement, and it is confined to --dry-run: --steer-only runs on
-            # a stand where the true answer is zero.
-            speed = (args.push_speed if args.dry_run and armed
-                     else duty_now * speed_ctrl.DUTY_TO_MPS)
-            travel_m = speed * scan_age
-            delta = pursuit.delta_rad if pursuit is not None else 0.0
-            yaw_delta_rad = (travel_m * math.tan(delta)
-                             / extrinsics.WHEELBASE_M)
+            # What topo_state is told next tick. Under power it is open loop
+            # from the commanded duty -- see speed_ctrl.DUTY_TO_MPS on how
+            # little that number is worth and why it is still enough. In a dry
+            # run the duty is pinned to zero, so travel is MEASURED instead:
+            # scan-matched ego motion over the cone field, at whatever pace
+            # the car is actually being pushed, deadman or no deadman.
+            if args.dry_run:
+                travel_m, yaw_delta_rad = dry_run_travel(odo_step)
+            else:
+                speed = duty_now * speed_ctrl.DUTY_TO_MPS
+                travel_m = speed * scan_age
+                delta = pursuit.delta_rad if pursuit is not None else 0.0
+                yaw_delta_rad = (travel_m * math.tan(delta)
+                                 / extrinsics.WHEELBASE_M)
 
             detection_age = (detection_set.age(now)
                              if detection_set is not None else float("inf"))
@@ -426,6 +436,8 @@ def main(argv=None):
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
             status = status_of(base, topo, junction, dropped, survey)
+            status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
+            status["odo_pairs"] = odo_step.pairs if odo_step else 0
 
             wall = time.time()
             if sinks.available:

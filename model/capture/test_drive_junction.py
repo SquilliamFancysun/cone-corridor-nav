@@ -142,38 +142,34 @@ def test_status_of_survives_having_no_state_machine():
 
 # --- the travel estimate ------------------------------------------------
 
-def test_a_dry_run_is_given_a_travel_estimate_the_motor_cannot_supply():
-    """--dry-run pins the duty to zero, and the travel estimate normally comes
-    from that duty. Without --push-speed `travelled_m` stays at zero, TRAVERSE
-    never clears its distance floor, and stage 3 -- which is a dry run -- can
-    only ever end by timing out with the divider frozen where it was first
-    seen."""
-    args = drive_junction.parse_args(
-        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman"])
-    assert args.push_speed > 0.0
+def test_a_dry_run_measures_its_travel_instead_of_assuming_it():
+    """--dry-run pins the duty to zero, so travel cannot come from the motor.
+    It used to come from an assumed push speed, which was exactly as honest
+    as the operator's pace was close to the assumption -- 0.13 m/s against an
+    assumed 0.5 declared a junction passed 1.94 m before the gate. Now it is
+    scan-matched ego motion, at whatever pace the car actually moves."""
+    from cone_perception import ego_motion
 
-    # The expression the loop uses, at the two duties that matter.
-    def travel(dry_run, duty_now, armed=True):
-        from cone_nav.control import speed_ctrl
-        speed = (args.push_speed if dry_run and armed
-                 else duty_now * speed_ctrl.DUTY_TO_MPS)
-        return speed * 0.1
-
-    assert travel(dry_run=True, duty_now=0.0) > 0.0
-    assert travel(dry_run=False, duty_now=0.0) == 0.0
-    # A stand is not a push: --steer-only takes the duty path, where zero is
-    # the true answer.
-    assert travel(dry_run=False, duty_now=0.1) > 0.0
+    step = ego_motion.Step(0.013, 0.001, 0.002, pairs=6)
+    travel, yaw = drive_junction.dry_run_travel(step)
+    assert travel == 0.013
+    assert yaw == 0.002
 
 
-def test_the_push_speed_only_counts_while_the_car_is_armed():
-    """Releasing the deadman means the operator has stopped, and a state
-    machine that keeps accruing distance through that is inventing motion."""
-    args = drive_junction.parse_args(
-        ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman",
-         "--push-speed", "0.4"])
-    speed = args.push_speed if args.dry_run and False else 0.0
-    assert speed == 0.0
+def test_standing_still_accrues_no_distance():
+    """Cluster jitter must not random-walk travelled_m upward while the car
+    stands in the window admiring its own detection -- topo_state clamps
+    negative travel, so unfiltered noise only ever adds."""
+    from cone_perception import ego_motion
+
+    jitter = ego_motion.Step(0.004, -0.002, 0.0, pairs=6)
+    travel, _yaw = drive_junction.dry_run_travel(jitter)
+    assert travel == 0.0
+
+
+def test_no_measurement_reads_as_no_motion():
+    travel, yaw = drive_junction.dry_run_travel(None)
+    assert travel == 0.0 and yaw == 0.0
 
 
 # --- the pipeline -------------------------------------------------------
@@ -273,20 +269,13 @@ def test_a_red_in_view_pulls_the_fill_in_even_in_follow():
     assert would == 2
 
 
-def test_a_blind_dry_run_names_the_cost_of_its_travel_fiction(capsys):
-    """Three stage-3 runs in a row were pushed under --no-deadman, where the
-    push-speed accrues whether the car moves or not: the carried divider and
-    the exit floor drift from reality and the traverse can only time out.
-    The combination is allowed -- it is the documented bring-up flow -- but it
-    must say what it costs and name the honest alternative."""
+def test_a_dry_run_announces_that_travel_is_measured(capsys):
+    """The push-speed assumption and its warning are gone; the run should say
+    plainly that pace no longer matters, because two days of stage-3 attempts
+    were shaped by operators trying to walk at an assumed number."""
     args = drive_junction.parse_args(
         ["--route", os.path.normpath(ROUTE), "--dry-run", "--no-deadman"])
     drive_junction.announce(args)
     out = capsys.readouterr().out
-    assert "moving or not" in out
-    assert "hold X" in out
-
-    args = drive_junction.parse_args(
-        ["--route", os.path.normpath(ROUTE), "--dry-run"])
-    drive_junction.announce(args)
-    assert "moving or not" not in capsys.readouterr().out
+    assert "MEASURED" in out
+    assert "push-speed" not in [a for a in vars(args)]
