@@ -31,16 +31,16 @@ from cone_nav.control.pure_pursuit import clamp
 # VESC_MAX_SPEED_PERCENT of 0.2, because that number is the ceiling for a human
 # holding a controller who can see the whole track, and this is a first
 # autonomous run alongside a person walking.
-# Duty cycle -> metres per second. A GUESS, and the least trustworthy number in
-# the stack -- it was fitted to nothing. It lives here rather than in the sim
-# because `drive_junction.py` needs it too: `topo_state` uses travelled distance
-# as the floor for deciding a junction is behind the car, and a constant the car
-# and the sim disagreed about would mean a manoeuvre tuned in one and run in the
-# other. Used only as a rough monotone estimate, never as a measurement.
-#
-# `myconfig_capture.py` sets VESC_HAS_SENSOR = True and nothing reads the
-# encoder yet. That is where this should come from once something does.
-DUTY_TO_MPS = 12.0
+# Duty cycle -> metres per second. MEASURED, at last: the first powered run
+# (2026-09-01, junction-live.jsonl) carried scan-matched odometry alongside
+# the commanded duty, and the median over the armed ticks was 0.38 m/s at
+# duty 0.05 -- 7.5, where the original guess said 12. One battery, one
+# surface, one duty point, so it is a first calibration rather than a curve;
+# refine it from any future run's odo_forward_m column. It matters less than
+# it used to -- the state machine now prefers the measured step and falls back
+# here only on a tick with no cones shared between scans -- but the sim's
+# vehicle model still runs on it.
+DUTY_TO_MPS = 7.5
 
 DEFAULT_MAX_DUTY = 0.10
 
