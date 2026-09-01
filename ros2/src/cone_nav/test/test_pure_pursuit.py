@@ -82,9 +82,22 @@ def test_a_line_starting_beyond_the_lookahead_aims_at_its_near_end():
     assert point == (3.0, 1.0)
 
 
-@pytest.mark.parametrize("points", [[], [(1.0, 0.0)]])
-def test_too_few_points_is_no_point(points):
-    assert lookahead_point(points, 1.5) == (None, False)
+def test_an_empty_line_is_no_point():
+    assert lookahead_point([], 1.5) == (None, False)
+
+
+def test_a_single_point_is_a_target_rather_than_a_polyline():
+    """There is no segment to intersect, but there is somewhere to go.
+
+    This is the end of a course and nothing else: the corridor's last midpoint
+    has passed behind the car and the goal anchor is all that is left on the
+    line. Refusing it froze the car 0.3004 m from the trophy with `no steerable
+    target` -- one tick short of the stop, and in a state it could not drive out
+    of, because the scan does not change while the car stands still.
+
+    Reported short, because a single point never reaches the lookahead distance.
+    """
+    assert lookahead_point([(1.0, 0.0)], 1.5) == ((1.0, 0.0), True)
 
 
 # --- the steering command -----------------------------------------------
@@ -169,9 +182,21 @@ def test_lookahead_is_measured_from_the_origin():
 
 # --- the refusals -------------------------------------------------------
 
-@pytest.mark.parametrize("points", [[], [(1.0, 0.0)]])
-def test_no_line_is_no_command(points):
-    assert steering_angle(points, 1.5, WHEELBASE) is None
+def test_no_line_is_no_command():
+    assert steering_angle([], 1.5, WHEELBASE) is None
+
+
+def test_a_single_point_still_yields_a_command():
+    """Steering at one measured point is well defined, so this module answers.
+
+    Whether to MOVE on it is not this module's call and is not granted here:
+    `speed_ctrl.duty` keeps its own `min_points` refusal, and only the goal
+    run-in waives it. See `test_speed_ctrl.py`.
+    """
+    result = steering_angle([(1.0, 0.0)], 1.5, WHEELBASE)
+    assert result is not None
+    assert result.short_line
+    assert result.delta_rad == pytest.approx(0.0, abs=1e-12)
 
 
 def test_a_line_entirely_behind_the_car_is_no_command():

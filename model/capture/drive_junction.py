@@ -13,9 +13,15 @@ this file adds is three lines in the middle of the pipeline:
     cones    = junction_exec.keep_branch(...)     # drop the other branch
     line     = junction_exec.junction_line(...)   # aim at the gate
 
+...and three more for the goal, which is the same idea again:
+
+    goal = goal_detect.survey(cones).goal         # a magenta in range?
+    goal_latch.update(goal, route_spent, ...)     # seeking / run-in / stopped
+    line = junction_exec.junction_line(line, ...) # aim at it, same helper
+
 Everything downstream of that -- `centerline`, `pure_pursuit`, `speed_ctrl`,
-`VescDriver` -- is byte-identical to plain corridor following. A junction is not
-a second control stack; it is a filtered cone list.
+`VescDriver` -- is byte-identical to plain corridor following. Neither a junction
+nor a goal is a second control stack; both are a cone list and an anchor.
 
 ## What is copied, and why that is a cost
 
@@ -58,9 +64,9 @@ from cone_nav.control import pure_pursuit, speed_ctrl
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
-from cone_nav.guidance import junction_exec
+from cone_nav.guidance import goal_stop, junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
-from cone_nav.topology import gate_detect, topo_state
+from cone_nav.topology import gate_detect, goal_detect, topo_state
 from cone_perception import (clustering, ego_motion, extrinsics, fusion,
                              label_memory)
 from drive_corridor import (
@@ -102,6 +108,14 @@ JUNCTION_STATUS_SCHEMA = {
         odo_forward_m={"type": "number", "description": "this tick's scan-matched travel; the dry run's odometry"},
         odo_pairs={"type": "integer", "description": "cones the odometry step was fitted on; 0 = no measurement"},
         topo_note={"type": "string"},
+        goal_state={"type": "string", "description": "seeking / run_in / stopped"},
+        goal_range_m={"type": "number", "description": "to the goal, measured if seen this tick else carried"},
+        goal_reason={"type": "string", "description": "why no goal was accepted this tick"},
+        goal_offset_m={"type": "number", "description": "the candidate's offset from the corridor axis"},
+        magenta_in_view={"type": "integer", "description": "magenta cones at ANY range"},
+        goal_armed={"type": "boolean", "description": "the route is spent, so a goal may stop the car"},
+        goal_blind_ticks={"type": "integer", "description": "ticks the goal has been carried rather than seen"},
+        goal_note={"type": "string"},
     ),
 }
 
@@ -119,7 +133,8 @@ JUNCTION_SCHEMA = {
 
 def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                    axis_rad=0.0, topo=None, previous_line=None,
-                   travel_m=0.0, yaw_delta_rad=0.0, red_memory=None):
+                   travel_m=0.0, yaw_delta_rad=0.0, red_memory=None,
+                   goal_latch=None, goal_armed=False):
     """One revolution -> cones, centerline, steering, duty, plus the manoeuvre.
 
     Identical to `drive_corridor.drive_pipeline` up to the fill and after the
@@ -151,6 +166,15 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     if topo is not None:
         topo.update(junction, previous_line, travel_m=travel_m,
                     yaw_delta_rad=yaw_delta_rad)
+
+    # Read off the same PRE-FILL, pre-branch-filter list the reds are. The fill
+    # only ever paints blue and yellow so it cannot invent a goal, but
+    # `keep_branch` can DELETE one, and a goal read after it would silently
+    # depend on which way the route happened to turn.
+    goal_survey = goal_detect.survey(cones, axis_rad=axis_rad)
+    if goal_latch is not None:
+        goal_latch.update(goal_survey.goal, goal_armed, travel_m=travel_m,
+                          yaw_delta_rad=yaw_delta_rad)
 
     engaged = topo is not None and topo.engaged
     if not args.no_fill:
@@ -184,16 +208,29 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     line = corridor_line
     if engaged and topo.anchor_ok and gate_xy is not None:
         line = junction_exec.junction_line(corridor_line, gate_xy)
+    if goal_latch is not None and goal_latch.anchor_ok:
+        # The same helper as the gate anchor, for the same reason: a magenta
+        # cone forms no midpoints, so without this the line stops at the last
+        # cone row and the goal is not on the driven path at all.
+        line = junction_exec.junction_line(line, goal_latch.goal_xy)
 
     axle = extrinsics.REAR_AXLE_IN_BASE
     pursuit = pure_pursuit.steering_angle(line.points, args.lookahead,
                                           extrinsics.WHEELBASE_M, origin=axle)
-    duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle)
+    # Both of the speed law's refusals stand down for the goal run-in, and for
+    # nothing else. Left in place they halt the car ~0.64 m from the trophy --
+    # before any stop range can fire, and unrecoverably, because the scan does
+    # not change while the car stands still. See cone_nav/guidance/goal_stop.py.
+    run_in = goal_latch is not None and goal_latch.run_in
+    duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle,
+                           min_reach_m=0.0 if run_in else speed_ctrl.MIN_REACH_M,
+                           min_points=1 if run_in else 2)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
-            junction, dropped, survey, remembered)
+            junction, dropped, survey, remembered, goal_survey)
 
 
-def status_of(base, topo, junction, dropped, survey=None):
+def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
+              goal_latch=None, goal_armed=False):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
     live = topo.live if topo else None
@@ -221,6 +258,20 @@ def status_of(base, topo, junction, dropped, survey=None):
         blind_ticks=topo.blind_ticks if topo else 0,
         travelled_m=round(topo.travelled_m, 3) if topo else 0.0,
         topo_note=topo.note if topo else "",
+        # The goal, on the same principle as `gate_reason`: a trophy at 3.4 m,
+        # a trophy off to one side and no trophy at all are different problems
+        # with different fixes, and none of them is visible in `goal_state`.
+        goal_state=goal_latch.state if goal_latch else "",
+        goal_range_m=(round(goal_latch.range_m, 3)
+                      if goal_latch and goal_latch.range_m is not None else 0.0),
+        goal_reason=goal_survey.reason if goal_survey else "",
+        goal_offset_m=(round(goal_survey.offset_m, 3)
+                       if goal_survey and goal_survey.offset_m is not None
+                       else 0.0),
+        magenta_in_view=len(goal_survey.magenta) if goal_survey else 0,
+        goal_armed=bool(goal_armed),
+        goal_blind_ticks=goal_latch.blind_ticks if goal_latch else 0,
+        goal_note=goal_latch.note if goal_latch else "",
     )
 
 
@@ -229,7 +280,26 @@ def parse_args(argv=None):
     parser.add_argument("--route", required=True,
                         help="path to a route file: one 'left' or 'right' per "
                              "junction, in order. See data/routes/")
+    parser.add_argument("--goal-stop", type=float,
+                        default=goal_stop.STOP_RANGE_M,
+                        help="metres from the lidar -- the front of the car -- "
+                             "at which the magenta goal stops the run. The "
+                             "floor is clustering.MIN_CONE_RANGE_M (0.20), "
+                             "below which the trophy stops being a cluster")
+    parser.add_argument("--goal-anywhere", action="store_true",
+                        help="arm the goal stop even while the route still has "
+                             "turns left. FOR BRING-UP on a corridor with no "
+                             "junction; on the track it lets a misread red stop "
+                             "the car mid-course")
     args = finalise_args(parser, parser.parse_args(argv))
+
+    if args.goal_stop < clustering.MIN_CONE_RANGE_M:
+        parser.error(
+            f"--goal-stop {args.goal_stop} is inside "
+            f"{clustering.MIN_CONE_RANGE_M} m, where a return is discarded as "
+            "the chassis arc\n       leaking and the trophy stops being a "
+            "cluster at all. The car would drive\n       at a goal it can no "
+            "longer see and stop on dead reckoning, if at all.")
 
     if args.no_camera:
         # drive_corridor only warns. Here it is fatal: the fork is exactly the
@@ -269,6 +339,18 @@ def announce(args):
     turns = ", ".join(args.route_turns)
     print(f"route     {len(args.route_turns)} junction(s): {turns}")
     print(f"           from {args.route}")
+    print(f"goal      stop {args.goal_stop} m from the lidar"
+          + ("   (ARMED FROM THE START)" if args.goal_anywhere else
+             "   (armed once the route is spent)"))
+    if args.goal_anywhere:
+        print("warning:  --goal-anywhere: any confirmed magenta may stop the "
+              "car, including one\n"
+              "          seen before the last turn. Magenta and red are the "
+              "detector's\n"
+              "          hardest pair -- v1 and v2 called 69% of magenta RED -- "
+              "so on a track\n"
+              "          with junctions this can end the run mid-course. "
+              "Bring-up only.")
     if args.dry_run:
         print("dry run   travel is MEASURED by scan matching over the cones; "
               "push at any pace,\n          pause freely. No push-speed "
@@ -339,6 +421,7 @@ def main(argv=None):
     # the travel it accrues is measured -- so the dry run gets a walker's
     # clock. Under power the driving bound stands.
     red_memory = label_memory.RedMemory()
+    goal_latch = goal_stop.GoalLatch(stop_range_m=args.goal_stop)
     topo = topo_state.TopoState(
         RouteCursor(args.route_turns),
         max_traverse_ticks=(topo_state.MAX_TRAVERSE_TICKS * 3
@@ -356,6 +439,8 @@ def main(argv=None):
     last_scan_at = started
     last_report = started
     last_state = topo.state
+    last_goal_state = goal_latch.state
+    was_armed = False
     loops = 0
 
     try:
@@ -365,6 +450,16 @@ def main(argv=None):
                 break
 
             armed = deadman.poll() if deadman.present else bool(args.no_deadman)
+
+            # Releasing X and pressing it again clears a goal stop, so the
+            # trophy can be reset and the run repeated without restarting the
+            # tool -- which would mean reopening the camera and the lidar. A
+            # RISING edge, deliberately: holding X through the arrival must not
+            # drive the car into the trophy it just stopped at.
+            if armed and not was_armed and goal_latch.stopped:
+                goal_latch.release()
+                print("  [goal released] X re-pressed -- driving again")
+            was_armed = armed
 
             scan = reader.take()
             if scan is None:
@@ -379,11 +474,18 @@ def main(argv=None):
             loops += 1
 
             detection_set = detector_thread.latest()
+            # The goal lies past the last junction by construction, so a
+            # magenta seen while a turn is still outstanding is a misread and
+            # must not be allowed to stop the car. --goal-anywhere overrides
+            # this for bring-up on a corridor with no junction in it.
+            goal_armed = args.goal_anywhere or topo.cursor.exhausted
             (result, cones, filled, line, pursuit, duty, corridor_line,
-             junction, dropped, survey, remembered) = drive_pipeline(
+             junction, dropped, survey, remembered,
+             goal_survey) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
-                yaw_delta_rad=yaw_delta_rad, red_memory=red_memory)
+                yaw_delta_rad=yaw_delta_rad, red_memory=red_memory,
+                goal_latch=goal_latch, goal_armed=goal_armed)
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
@@ -399,6 +501,11 @@ def main(argv=None):
             if not armed:
                 target_duty = 0.0
             if args.steer_only or args.dry_run:
+                target_duty = 0.0
+            if goal_latch.stopped:
+                # The run is over. Held here rather than inside `speed_ctrl` so
+                # that every gate which can stop this car stays in one place,
+                # the way `armed` and --steer-only already are.
                 target_duty = 0.0
             duty_now = speed_ctrl.ramp(duty_now, target_duty)
 
@@ -437,7 +544,9 @@ def main(argv=None):
                 result, cones, filled, line, pursuit, duty, servo, armed, args,
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
-            status = status_of(base, topo, junction, dropped, survey)
+            status = status_of(base, topo, junction, dropped, survey,
+                               goal_survey=goal_survey, goal_latch=goal_latch,
+                               goal_armed=goal_armed)
             status["labeled_by_memory"] = remembered
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
             status["odo_pairs"] = odo_step.pairs if odo_step else 0
@@ -472,6 +581,19 @@ def main(argv=None):
                       + (f"  ({topo.note})" if topo.note else ""))
                 last_state = topo.state
 
+            # The arrival is the one event this whole tool exists to produce,
+            # so it prints when it happens rather than waiting up to a second.
+            if goal_latch.state != last_goal_state:
+                print(f"  [goal {last_goal_state} -> {goal_latch.state}] "
+                      f"{status['goal_range_m']:.2f} m"
+                      + (f", carried {goal_latch.blind_ticks} ticks"
+                         if goal_latch.blind_ticks else "")
+                      + (f"  ({goal_latch.note})" if goal_latch.note else ""))
+                if goal_latch.stopped:
+                    print("  GOAL REACHED -- release X and press it again to "
+                          "drive on.")
+                last_goal_state = goal_latch.state
+
             if now - last_report >= 1.0:
                 last_report = now
                 flag = "ARMED " if armed else "idle  "
@@ -486,6 +608,20 @@ def main(argv=None):
                     reds += f"  gaps {status['red_gaps_m']}"
                 if survey.reason:
                     reds += f"  [{survey.reason}]"
+                # Only once the goal is the live question -- while turns remain
+                # this would be a column of 'no magenta' scrolling past the
+                # thing the operator is actually watching.
+                goal_line = ""
+                if goal_armed or goal_survey.magenta:
+                    goal_line = f"  goal {goal_latch.state}"
+                    if goal_latch.range_m is not None:
+                        goal_line += f" @ {goal_latch.range_m:.2f} m"
+                    if goal_latch.blind_ticks:
+                        goal_line += f" (carried {goal_latch.blind_ticks})"
+                    if goal_survey.reason:
+                        goal_line += f" [{goal_survey.reason}]"
+                    if not goal_armed:
+                        goal_line += " [disarmed: route not spent]"
                 health = drive_corridor.camera_health(
                     detection_age, args.max_detection_age)
                 health = " / ".join(
@@ -496,6 +632,7 @@ def main(argv=None):
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
                       f"{topo.state} {reds}"
                       + (f"/{topo.turn}" if topo.engaged else "")
+                      + goal_line
                       + (f"  [{duty.reason}]" if duty.reason else "")
                       + (f"  !! {health}" if health else ""))
     except KeyboardInterrupt:
@@ -521,6 +658,13 @@ def main(argv=None):
         if topo.cursor.remaining:
             print(f"warning:  {topo.cursor.remaining} junction(s) of the route "
                   "were never taken")
+        if goal_latch.stopped:
+            print(f"reached the goal, stopped {goal_latch.range_m:.2f} m from it"
+                  + (" ON A CARRIED ESTIMATE -- the camera had lost it"
+                     if "carried" in goal_latch.note else ""))
+        elif not topo.cursor.remaining:
+            print("warning:  the route was completed but the goal was never "
+                  "reached")
     return 0
 
 

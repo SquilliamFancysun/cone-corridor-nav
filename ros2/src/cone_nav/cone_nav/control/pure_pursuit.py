@@ -175,8 +175,23 @@ def lookahead_point(points, lookahead_m, origin=(0.0, 0.0)):
     it is `speed_ctrl` that decides a short line means slow down. Returns
     `(None, ...)` only when there is nothing usable at all.
     """
-    if not points or len(points) < 2:
+    if not points:
         return None, False
+    if len(points) == 1:
+        # A lone point is a target, not a polyline: there is no segment to
+        # intersect, and the circle test below would have nothing to walk.
+        #
+        # This is the end of a course, and only that. The corridor has run out --
+        # its last midpoint is behind the car -- and the one thing left on the
+        # line is the goal anchor, which is a measured object rather than a lone
+        # midpoint of a corridor nobody can see. Returning None here instead
+        # froze the car 0.3004 m from the trophy with `no steerable target`, one
+        # tick short of the stop, and a car stopped by a perception rule cannot
+        # restart itself: the scan does not change while it stands still.
+        #
+        # This alone does not let a one-point line MOVE the car. `speed_ctrl`
+        # keeps its own refusal, and only the goal run-in waives it.
+        return points[0], True
 
     for i in range(len(points) - 1):
         p1, p2 = points[i], points[i + 1]

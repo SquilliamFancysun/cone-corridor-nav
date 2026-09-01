@@ -60,7 +60,7 @@ rather than snakes and the footprint drops to roughly 7 × 6 m.
 | Dead-end stub | 1.5 m deep, walled across the end | Long enough that the car commits before the wall is obvious |
 | Red gates | Pairs, straddling the corridor 1.0 m before each fork | `GateEvent.distance` is "meters to gate midpoint"; `gate_detect.py` keys on *pairs*, so red never goes down singly |
 | Orange dead ends | The middle cone of each dead-end end wall | Its own class, so a stub is recognisable before the car commits to it |
-| Magenta goal | One cone, centered, end of Corridor C | |
+| Magenta goal | One cone, **centered within 0.25 m of the corridor axis**, end of Corridor C | The tolerance is `side_assign.MIN_OFFSET_M`, not taste: a trophy further off-axis is painted BLUE or YELLOW by the geometric fill once it is inside 2 m and out of frame, which puts a corridor midpoint where there is no corridor. `goal_detect.MAX_OFFSET_M` then refuses it at 0.50 m |
 | Route | LEFT at J1, RIGHT at J2 | |
 
 ## Cone budget

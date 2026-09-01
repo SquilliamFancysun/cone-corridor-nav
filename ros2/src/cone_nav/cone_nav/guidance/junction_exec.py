@@ -123,7 +123,14 @@ def keep_branch(cones, divider_xy, axis_rad, turn, margin_m=BRANCH_MARGIN_M):
 
 
 def junction_line(line, gate_xy, merge_m=ANCHOR_MERGE_M):
-    """Thread the gate midpoint into the driven line, in distance order.
+    """Thread an anchor point into the driven line, in distance order.
+
+    Written for the gate midpoint and named for it, but the operation is general
+    and `cone_nav/guidance/goal_stop.py` reuses it unchanged to hang the goal
+    cone on the end of the line. The two cases share the property that makes an
+    anchor necessary at all: the point matters to where the car should go, and
+    the corridor pairs cannot express it -- `midpoint_graph` pairs only blue with
+    yellow, so neither a red gate nor a magenta goal ever becomes a chain point.
 
     The anchor exists because the corridor pairs either side of the mouth do not
     themselves describe the mouth: the last incoming midpoint sits behind the

@@ -222,6 +222,78 @@ compare against the distance actually covered from commit to clear. Scale the
 constant by the ratio. The proper fix is the VESC encoder — `VESC_HAS_SENSOR`
 is already true and nothing reads it.
 
+## Stage 6 — the goal
+
+The goal is a magenta 3D-printed trophy, 6.88 in tall, standing where the last
+corridor ends. `drive_junction.py` reads it, drives at it, and stops
+`--goal-stop` metres short — 0.30 m by default, measured from the lidar, which
+`hardware-baseline.md` puts at the front edge of the chassis. So the number is
+nose-to-trophy.
+
+Nothing here arms until the route is spent. The goal lies past the last junction
+by construction, so a magenta seen while a turn is still outstanding is a
+misread — and magenta/red is the detector's hardest pair, so that is a real
+possibility rather than a theoretical one. `--goal-anywhere` overrides it for
+bring-up on a corridor with no junction in it, and says so loudly at startup.
+
+### 6a — can the lidar see the trophy at all?
+
+**Do this first; everything else is void without it.** The scan plane sits at
+0.127 m, which is 71% of the way up a 7 in cone and well into the taper — and a
+trophy is not a cone in cross-section. If it has a stem or a waist at that
+height it may present ~2 cm, which subtends 0.57° at 2 m: under one return,
+where `clustering.py` needs two.
+
+Stand the trophy at 1, 2 and 3 m and read points-per-cluster out of
+`lidar_view.py`. **Two or more returns at 3 m** and the design holds. Fewer and
+stop: the goal would need a camera-only channel (bearing plus `range_bbox`),
+which is a different design and not what is built.
+
+### 6b — does the detector find it?
+
+`detect_view.py` with the trophy at 1–3 m. Watch for magenta boxes at all, and
+specifically for **magenta read as red** — v1 and v2 both did that on 69% of
+instances, and a trophy read as red is a cone that can complete a junction
+triple where there is no junction.
+
+### 6c — dry run
+
+    python drive_junction.py --weights ~/models/best.pt --route <route> \
+        --goal-anywhere --dry-run --no-deadman --log goal-dry.jsonl
+
+Push the car at the trophy down a short corridor. Travel is measured by scan
+matching in a dry run, so the carry through a camera dropout is exercised
+honestly at walking pace. Read `goal_reason` first when nothing happens — it
+names the fix:
+
+| `goal_reason` | What it means | Where to look |
+|---|---|---|
+| `no magenta` | The detector is not finding it | 6b, and the weights |
+| `magenta in view, beyond arm range` | It IS found; the car is too far back | Walk closer; the arm range is 3.0 m, slant |
+| `magenta off the corridor axis` | Found, but not where a goal can be | The tape. `goal_offset_m` says by how much |
+| `more than one magenta in range` | Two candidates; it declines to guess | Clear the spare, or find the false positive |
+
+Then watch `goal_state` walk `seeking → run_in → stopped`, `goal_range_m` close
+monotonically, and `goal_blind_ticks` stay at or near zero. A run that arrives
+with `goal_blind_ticks` high finished on dead reckoning; the summary line says
+so, and it means the camera lost the trophy in the last metre.
+
+### 6d — driven
+
+Same command without `--dry-run --no-deadman`, at `--max-duty 0.05`. Confirm:
+
+- the latch fires at `--goal-stop`, and measure where the car actually ends up;
+- the trial log's `stop_reason` is empty with `goal_state = stopped`, **not**
+  `corridor visible only ... m ahead` — that reason means the reach floor got
+  there first and the goal did nothing;
+- releasing X and pressing it again drives on, so the trophy can be reset
+  without restarting the tool.
+
+The default 0.30 m assumes the near-zero coast measured on this car. If the car
+overshoots, raise it; do not lower it below 0.20 m, where
+`clustering.MIN_CONE_RANGE_M` discards the trophy's return as a chassis leak and
+the car would be stopping on a goal it can no longer see.
+
 ## What to bring back
 
 - `junction-see.jsonl` per direction, and `junction-run-N.jsonl` per driven run,
@@ -229,6 +301,9 @@ is already true and nothing reads it.
 - the measured gate gaps, from `gate_gaps_m` rather than the tape
 - the photograph of the built junction
 - whether `--invert-steering` was needed
+- points-per-cluster on the trophy at 1, 2 and 3 m (stage 6a)
+- where the car actually stopped against `--goal-stop`, and the
+  `goal_blind_ticks` it arrived with
 
 Enough to answer, at the desk, why any run did what it did — and enough to
 correct `junction_v2.md` if the track disagrees with it.

@@ -33,9 +33,9 @@ import math
 import sys
 
 from cone_nav.control import pure_pursuit, speed_ctrl
-from cone_nav.guidance import junction_exec
+from cone_nav.guidance import goal_stop, junction_exec
 from cone_nav.guidance.route_exec import RouteCursor, load_route
-from cone_nav.topology import gate_detect, topo_state
+from cone_nav.topology import gate_detect, goal_detect, topo_state
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
@@ -69,6 +69,12 @@ DUTY_TO_MPS = speed_ctrl.DUTY_TO_MPS
 # Half the car's width plus a cone's base radius. Closer than this and the car
 # has hit the cone.
 STRIKE_CLEARANCE_M = 0.15
+
+# The outcome of a run that ended the way the course intends. Distinct from
+# "reached the end", which is a PROXIMITY test against the layout's own last
+# midpoint and would score a car that merely coasted to a halt nearby -- the
+# thing this whole feature exists to stop being the answer.
+GOAL_OUTCOME = "stopped at the goal"
 
 # How close to the last ideal centerline point counts as finishing. Derived from
 # the speed law's own stopping rule plus half a car, not chosen: see the comment
@@ -149,7 +155,8 @@ class Tick(object):
 
     __slots__ = ("t", "x", "y", "heading_deg", "cones", "labeled", "filled",
                  "centerline_points", "reach_m", "delta_rad", "duty", "reason",
-                 "fallback", "topo", "turn", "dropped", "gate_range_m")
+                 "fallback", "topo", "turn", "dropped", "gate_range_m",
+                 "goal_state", "goal_range_m", "goal_reason")
 
     def __init__(self, **kw):
         for slot in self.__slots__:
@@ -176,7 +183,14 @@ class SimResult(object):
 
     @property
     def completed(self):
-        return self.outcome == "reached the end"
+        # Both count as finishing the course. They are different achievements
+        # and `stopped_at_goal` tells them apart: one is the car recognising the
+        # trophy, the other is it running out of corridor near it.
+        return self.outcome in ("reached the end", GOAL_OUTCOME)
+
+    @property
+    def stopped_at_goal(self):
+        return self.outcome == GOAL_OUTCOME
 
     def __repr__(self):
         return (f"SimResult({self.outcome}, {self.distance_m:.1f} m, "
@@ -274,7 +288,8 @@ def observe(layout, pose, intr, dropout=(), seed=None, detector_hfov=None):
 def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
              reference_heading_rad=0.0, fill_in_fov=False,
              topo=None, previous_line=None, travel_m=0.0,
-             yaw_delta_rad=0.0, red_memory=None, now_s=0.0):
+             yaw_delta_rad=0.0, red_memory=None, now_s=0.0,
+             goal_latch=None, goal_armed=False):
     """The production perception path, exactly as `fusion_view.pipeline_once`.
 
     Kept as its own function so a divergence between the sim and the car is a
@@ -293,7 +308,9 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     guarantees two points whether or not the car can see a corridor.
 
     Passing `topo` turns on junction handling. That is the whole of it: three
-    steps around the same `centerline` call the plain corridor uses.
+    steps around the same `centerline` call the plain corridor uses. Passing
+    `goal_latch` turns on the goal the same way, and for the same reason -- the
+    goal is one more anchor on the same line, not a second controller.
     """
     candidates = clustering.cone_candidates(scan, IDENTITY_CALIBRATION)
     result = fusion.associate(candidates, detections, intr,
@@ -311,6 +328,15 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
         topo.update(survey.junction, previous_line, travel_m=travel_m,
                     yaw_delta_rad=yaw_delta_rad)
     engaged = topo is not None and topo.engaged
+
+    # Read off the same PRE-FILL, pre-branch-filter list the reds are read from.
+    # The fill only ever paints blue and yellow, so it cannot invent a goal --
+    # but keep_branch can DELETE one, and a goal read after it would silently
+    # depend on which way the route happened to turn.
+    goal_survey = goal_detect.survey(cones, axis_rad=reference_heading_rad)
+    if goal_latch is not None:
+        goal_latch.update(goal_survey.goal, goal_armed, travel_m=travel_m,
+                          yaw_delta_rad=yaw_delta_rad)
 
     filled = 0
     if fill_sides:
@@ -336,7 +362,12 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     line = corridor_line
     if topo is not None and topo.anchor_ok and gate_xy is not None:
         line = junction_exec.junction_line(corridor_line, gate_xy)
-    return result, cones, line, filled, corridor_line, dropped
+    if goal_latch is not None and goal_latch.anchor_ok:
+        # The same helper, for the same reason: a magenta cone forms no
+        # midpoints, so without this the line simply stops at the last cone row
+        # and the goal is not on the path at all.
+        line = junction_exec.junction_line(line, goal_latch.goal_xy)
+    return result, cones, line, filled, corridor_line, dropped, goal_survey
 
 
 def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
@@ -345,18 +376,25 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
              detection_age_s=0.0, fill_sides=True,
              latency_ticks=DEFAULT_LATENCY_TICKS, servo_tau_s=SERVO_TAU_S,
              fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW,
-             route=None):
+             route=None, goal_stop_m=goal_stop.STOP_RANGE_M,
+             goal_anywhere=False):
     """Drive the layout. Returns a SimResult; never raises on a bad run.
 
     `route` is a list of turns; passing one turns on junction handling with the
     same `TopoState` and `RouteCursor` `drive_junction.py` uses, so a gain tuned
     here is tuned against the code the car runs.
+
+    The goal latch is always running, armed on the same condition the car uses:
+    no turn still outstanding. `goal_anywhere` forces it on even while the route
+    has turns left, mirroring the car's bring-up flag -- it is there to be tested
+    against, not to drive a track with.
     """
     intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
 
     topo = topo_state.TopoState(RouteCursor(route)) if route else None
     red_memory = label_memory.RedMemory() if route else None
+    goal_latch = goal_stop.GoalLatch(stop_range_m=goal_stop_m)
     previous_line = None
     last_travel = 0.0
     last_yaw = 0.0
@@ -386,11 +424,16 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         pose = vehicle.base_pose()
         scan, detections = observe(layout, pose, intr, dropout=dropout,
                                    seed=seed)
-        result, cones, line, filled, corridor_line, dropped = pipeline(
+        # Armed exactly as `drive_junction.py` arms it: the goal lies at the
+        # end of the route by construction, so a magenta seen while a turn is
+        # still outstanding is a misread and must not stop the car.
+        goal_armed = goal_anywhere or topo is None or topo.cursor.exhausted
+        result, cones, line, filled, corridor_line, dropped, goal_survey = pipeline(
             scan, detections, intr, detection_age_s, fill_sides=fill_sides,
             reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov,
             topo=topo, previous_line=previous_line, travel_m=last_travel,
-            yaw_delta_rad=last_yaw, red_memory=red_memory, now_s=i * DT_S)
+            yaw_delta_rad=last_yaw, red_memory=red_memory, now_s=i * DT_S,
+            goal_latch=goal_latch, goal_armed=goal_armed)
         previous_line = corridor_line
         # The corridor the car is in rotates relative to the car through a
         # bend, so the side split follows last frame's line rather than
@@ -399,9 +442,17 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
 
         pursuit = pure_pursuit.steering_angle(
             line.points, lookahead_m, wheelbase_m, origin=rear_axle_in_base)
+        # The reach floor stands down for the goal run-in and nowhere else. Left
+        # in place it halts the car 0.64 m from the trophy -- before any stop
+        # range can trigger, and unrecoverably, since the scan does not change
+        # while the car stands still. See cone_nav/guidance/goal_stop.py.
         target = speed_ctrl.duty(pursuit, line, max_duty=max_duty,
-                                 origin=rear_axle_in_base)
-        duty_now = speed_ctrl.ramp(duty_now, target.duty)
+                                 origin=rear_axle_in_base,
+                                 min_reach_m=(0.0 if goal_latch.run_in
+                                              else speed_ctrl.MIN_REACH_M),
+                                 min_points=1 if goal_latch.run_in else 2)
+        duty_now = speed_ctrl.ramp(
+            duty_now, 0.0 if goal_latch.stopped else target.duty)
 
         # Median-filter the command exactly as drive_corridor.py does, so a
         # gain chosen here is chosen against the same signal the car acts on.
@@ -428,7 +479,10 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
             topo=topo.state if topo else "", turn=topo.turn if topo else "",
             dropped=dropped,
             gate_range_m=(topo.junction.range_for(topo.turn)
-                          if topo and topo.junction and topo.turn else 0.0)))
+                          if topo and topo.junction and topo.turn else 0.0),
+            goal_state=goal_latch.state,
+            goal_range_m=goal_latch.range_m or 0.0,
+            goal_reason=goal_survey.reason))
 
         speed = duty_now * DUTY_TO_MPS
         heading_before = vehicle.heading_rad
@@ -446,6 +500,12 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
             return _finish(outcome, ticks, vehicle, layout, hit, distance,
                            max_steer)
 
+        if goal_latch.stopped:
+            # The run ended the way the course intends. Checked after the strike
+            # test so a car that stopped ON the trophy still reports the strike.
+            outcome = GOAL_OUTCOME
+            break
+
         # A car commanding zero for two seconds is not going to start again on
         # its own: the centerline it is refusing to drive on is computed from a
         # scan taken where it is standing.
@@ -461,8 +521,16 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # that scores every correct run as a failure, and does it
         # non-monotonically -- which reads as controller instability and is
         # purely an artefact of the scoring.
-        if finish is not None and math.hypot(vehicle.x - finish[0],
-                                             vehicle.y - finish[1]) < FINISH_RADIUS_M:
+        #
+        # It is suspended once a goal has been confirmed, because then stopping
+        # short is no longer the designed behaviour -- the car is closing on the
+        # trophy and has another 1.1 m to travel. Left armed, this radius ends
+        # every run at 1.17 m from the goal and the stop can never be observed
+        # at all. `confirmed` goes false again if the latch gives up, so a run
+        # that loses the goal still has an ending.
+        if (finish is not None and not goal_latch.confirmed
+                and math.hypot(vehicle.x - finish[0],
+                               vehicle.y - finish[1]) < FINISH_RADIUS_M):
             outcome = "reached the end"
             break
 
@@ -618,6 +686,13 @@ def main(argv=None):
                         help="path to a route file (see data/routes/). Turns "
                              "on junction handling; required for a junction "
                              "track and meaningless without one")
+    parser.add_argument("--goal-stop", type=float,
+                        default=goal_stop.STOP_RANGE_M,
+                        help="metres from base_link at which the magenta goal "
+                             "stops the run. Sweep it here before committing a "
+                             "value to the car")
+    parser.add_argument("--goal-anywhere", action="store_true",
+                        help="arm the goal even while the route has turns left")
     parser.add_argument("--no-plot", action="store_true")
     args = parser.parse_args(argv)
 
@@ -639,7 +714,9 @@ def main(argv=None):
                            dropout=dropout, seed=args.seed,
                            fill_sides=not args.no_camera_fill,
                            latency_ticks=args.latency_ticks,
-                           servo_tau_s=args.servo_tau, route=route)
+                           servo_tau_s=args.servo_tau, route=route,
+                           goal_stop_m=args.goal_stop,
+                           goal_anywhere=args.goal_anywhere)
             print(f"{lookahead:>10.1f}  {res.outcome:<28} "
                   f"{res.distance_m:>5.1f}m  "
                   f"{res.mean_xtrack_m * 100:>10.1f}cm  "
@@ -652,7 +729,9 @@ def main(argv=None):
                       dropout=dropout, seed=args.seed,
                       fill_sides=not args.no_camera_fill,
                       latency_ticks=args.latency_ticks,
-                      servo_tau_s=args.servo_tau, route=route)
+                      servo_tau_s=args.servo_tau, route=route,
+                      goal_stop_m=args.goal_stop,
+                      goal_anywhere=args.goal_anywhere)
     print(f"track {args.track}, {len(layout)} cones, "
           f"lookahead {args.lookahead} m, max duty {args.max_duty}\n")
     print(summarise(result))

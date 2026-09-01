@@ -11,6 +11,7 @@ import os
 import pytest
 
 import drive_junction
+from cone_nav.guidance import goal_stop
 from cone_nav.topology import topo_state
 
 ROUTE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -266,3 +267,126 @@ def test_a_dry_run_announces_that_travel_is_measured(capsys):
     out = capsys.readouterr().out
     assert "MEASURED" in out
     assert "push-speed" not in [a for a in vars(args)]
+
+
+# --- the goal -----------------------------------------------------------
+
+def test_the_goal_stop_range_has_a_default_and_is_tunable():
+    assert drive_junction.parse_args(BASE).goal_stop == goal_stop.STOP_RANGE_M
+    args = drive_junction.parse_args(BASE + ["--goal-stop", "0.45"])
+    assert args.goal_stop == 0.45
+
+
+def test_a_goal_stop_inside_the_chassis_floor_is_refused():
+    """Below `clustering.MIN_CONE_RANGE_M` the trophy's return is discarded as
+    the chassis arc leaking, so the car would be driving at a goal it can no
+    longer see and stopping -- if at all -- on dead reckoning."""
+    with pytest.raises(SystemExit):
+        drive_junction.parse_args(BASE + ["--goal-stop", "0.10"])
+
+
+def test_the_goal_is_disarmed_until_the_route_is_spent_unless_told_otherwise():
+    assert drive_junction.parse_args(BASE).goal_anywhere is False
+    assert drive_junction.parse_args(BASE + ["--goal-anywhere"]).goal_anywhere
+
+
+def test_the_status_record_carries_the_goal():
+    junction = set(drive_junction.JUNCTION_STATUS_SCHEMA["properties"])
+    assert {"goal_state", "goal_range_m", "goal_reason", "goal_offset_m",
+            "magenta_in_view", "goal_armed", "goal_blind_ticks"} <= junction
+
+
+def test_status_of_survives_having_no_goal_latch():
+    """Same contract as the state machine: the record is always the full shape,
+    so a column never silently disappears from the trial log."""
+    record = drive_junction.status_of({"duty": 0.0}, None, None, 0)
+    assert record["goal_state"] == ""
+    assert record["goal_range_m"] == 0.0
+    assert set(record) - {"duty"} <= set(
+        drive_junction.JUNCTION_STATUS_SCHEMA["properties"])
+
+
+def test_status_of_reports_why_a_magenta_was_not_accepted():
+    """`goal_state` alone cannot separate 'no trophy' from 'trophy off to one
+    side' from 'trophy too far back', and those have different fixes."""
+    from cone_nav.topology import goal_detect
+    from cone_perception.cone_classes import CLASS_MAGENTA
+    from cone_perception.fusion import LabeledCone
+
+    off = LabeledCone(CLASS_MAGENTA, 0.9, 2.0, 0.9, range_lidar=2.19, points=4)
+    record = drive_junction.status_of({"duty": 0.0}, None, None, 0,
+                                      goal_survey=goal_detect.survey([off]))
+    assert record["goal_reason"] == goal_detect.OFF_AXIS
+    assert record["goal_offset_m"] == pytest.approx(0.9)
+    assert record["magenta_in_view"] == 1
+
+
+def test_the_pipeline_drives_the_car_at_a_confirmed_goal():
+    """End to end on a synthetic scan: a magenta ahead of the car has to reach
+    the latch, land on the driven line, and produce throttle -- the last of
+    those being the point, since the corridor here is too short to move on."""
+    from cone_perception.geometry import intrinsics_from_hfov
+    from sim import cone_field
+    from sim.drive_sim import CLASS_IDS, PREVIEW_H, PREVIEW_W
+
+    layout = cone_field.straight_corridor(length=3.0, spacing=0.5)
+    goal_xy = (3.4, 0.0)
+    layout = layout + [cone_field.Cone("magenta", goal_xy[0], goal_xy[1], "goal")]
+    intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
+
+    class Set(object):
+        def __init__(self, d):
+            self.detections = d
+
+        def age(self, _now):
+            return 0.0
+
+    latch = goal_stop.GoalLatch()
+    # Walk the car up the corridor so the latch sees the goal on consecutive
+    # ticks, as it would on a real approach.
+    for x in (1.0, 1.4, 1.8, 2.2, 2.6):
+        pose = cone_field.Pose(x, 0.0, 0.0)
+        local = cone_field.cones_in_car_frame(layout, pose)
+        out = drive_junction.drive_pipeline(
+            cone_field.synth_scan(local),
+            Set(cone_field.synth_detections(local, intr, CLASS_IDS)),
+            cone_field.IDENTITY_CALIBRATION, intr, Args(), 0.0,
+            goal_latch=latch, goal_armed=True)
+
+    line, duty, goal_survey = out[3], out[5], out[11]
+    assert goal_survey.reason == "", goal_survey.reason
+    assert latch.confirmed
+    assert latch.anchor_ok
+    # The goal is the far end of the driven line -- that is what the anchor is.
+    assert line.points[-1] == pytest.approx((goal_xy[0] - 2.6, 0.0), abs=0.05)
+    assert duty.duty > 0.0, duty.reason
+
+
+def test_a_magenta_does_not_stop_the_car_while_a_turn_is_outstanding():
+    """The arming guard, at the pipeline level: same scene, `goal_armed` false,
+    and the latch must stay out of it however clear the detection is."""
+    from cone_perception.geometry import intrinsics_from_hfov
+    from sim import cone_field
+    from sim.drive_sim import CLASS_IDS, PREVIEW_H, PREVIEW_W
+
+    layout = (cone_field.straight_corridor(length=3.0, spacing=0.5)
+              + [cone_field.Cone("magenta", 1.2, 0.0, "goal")])
+    intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
+
+    class Set(object):
+        def __init__(self, d):
+            self.detections = d
+
+        def age(self, _now):
+            return 0.0
+
+    latch = goal_stop.GoalLatch()
+    local = cone_field.cones_in_car_frame(layout, cone_field.Pose(0.0, 0.0, 0.0))
+    for _ in range(8):
+        drive_junction.drive_pipeline(
+            cone_field.synth_scan(local),
+            Set(cone_field.synth_detections(local, intr, CLASS_IDS)),
+            cone_field.IDENTITY_CALIBRATION, intr, Args(), 0.0,
+            goal_latch=latch, goal_armed=False)
+    assert not latch.stopped
+    assert not latch.confirmed

@@ -94,6 +94,56 @@ def test_the_reach_floor_is_a_boundary_not_a_slope():
     assert duty(pursuit_for(over), FakeLine(over)).duty > 0.0
 
 
+# --- standing the reach floor down, for the goal run-in -----------------
+
+def test_the_reach_floor_can_be_lowered_by_the_caller():
+    """The goal run-in's one requirement. Without it the reach rule stops the
+    car 0.64 m from the trophy -- before any stop range can trigger, with
+    'corridor visible only ...' in the log, and unrecoverably, since the scan
+    does not change while the car stands still."""
+    points = straight(length=0.6, step=0.15)
+    assert duty(pursuit_for(points), FakeLine(points)).duty == 0.0
+    relaxed = duty(pursuit_for(points), FakeLine(points), min_reach_m=0.0)
+    assert relaxed.duty > 0.0
+    assert relaxed.reason == ""
+
+
+def test_a_relaxed_floor_still_crawls_rather_than_accelerating():
+    """Reach is what scales duty between the floor and FULL_REACH_M, so a line
+    this short lands on MIN_MOVE_DUTY. The last metre is driven at the cogging
+    floor, which is the only speed that makes sense there."""
+    points = straight(length=0.6, step=0.15)
+    result = duty(pursuit_for(points), FakeLine(points), min_reach_m=0.0)
+    assert result.duty == pytest.approx(MIN_MOVE_DUTY)
+
+
+def test_a_one_point_line_does_not_move_the_car_by_default():
+    """`pure_pursuit` will steer at a single target; deciding to MOVE on one is
+    this module's call, and by default it refuses. Two points is the right floor
+    for a CORRIDOR, whose lone midpoint says nothing trustworthy."""
+    line = FakeLine([(0.6, 0.0)])
+    assert duty(pursuit_for(line.points), line).duty == 0.0
+
+
+def test_the_goal_run_in_may_drive_at_a_single_point():
+    """...and the wrong floor for a measured object at the end of a course,
+    where the corridor has genuinely run out and the trophy is all that is
+    left."""
+    line = FakeLine([(0.6, 0.0)])
+    result = duty(pursuit_for(line.points), line, min_reach_m=0.0, min_points=1)
+    assert result.duty == pytest.approx(MIN_MOVE_DUTY)
+    assert result.reason == ""
+
+
+def test_relaxing_the_floor_changes_nothing_about_a_healthy_corridor():
+    """It moves one refusal and nothing else -- a corridor that was drivable is
+    driven at exactly the same duty."""
+    points = straight(length=4.0, step=0.25)
+    plain = duty(pursuit_for(points), FakeLine(points))
+    relaxed = duty(pursuit_for(points), FakeLine(points), min_reach_m=0.0)
+    assert relaxed.duty == pytest.approx(plain.duty)
+
+
 # --- the dead band ------------------------------------------------------
 
 def test_duty_never_lands_between_zero_and_the_motor_floor():

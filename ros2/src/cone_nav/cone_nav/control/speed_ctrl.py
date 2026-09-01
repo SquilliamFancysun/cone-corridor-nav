@@ -56,6 +56,10 @@ STEER_DERATE = 0.5
 # first metre of -- and per `cone_perception/clustering.py`, a lidar cluster past
 # ~3 m is one return or none, so a line this short usually means the cones ahead
 # have dropped out rather than that the corridor ended.
+#
+# One caller is allowed past it, via `duty(min_reach_m=...)`: the goal run-in,
+# where the line legitimately ends a few tens of centimetres ahead because the
+# course does. See `cone_nav/guidance/goal_stop.py`.
 MIN_REACH_M = 1.0
 
 # Reach at which the car may run at full duty. Between MIN_REACH_M and this it
@@ -112,21 +116,38 @@ def reach_of(line, origin=(0.0, 0.0)):
     return max(0.0, line.points[-1][0] - origin[0])
 
 
-def duty(pursuit, line, max_duty=DEFAULT_MAX_DUTY, origin=(0.0, 0.0)):
+def duty(pursuit, line, max_duty=DEFAULT_MAX_DUTY, origin=(0.0, 0.0),
+         min_reach_m=MIN_REACH_M, min_points=2):
     """Centerline and steering command -> duty cycle. Never raises.
 
     Zero is a first-class answer here, not a failure: `pursuit is None` means
     `steering_angle` found nothing steerable, and holding the last good throttle
     through that is how a car drives itself into cones it stopped being able to
     see.
+
+    `min_reach_m` and `min_points` exist for exactly one caller and default to
+    leaving both refusals where they have always been. `cone_nav/guidance/goal_stop.py` passes
+    zero over the last metre of a goal approach, where the reach rule would
+    otherwise stop the car at 0.64 m from the trophy -- for a bookkeeping reason,
+    and unrecoverably, since the scan does not change while the car stands still.
+    The rule's own rationale does not describe that situation: there is no
+    corridor left to commit to, only a lidar-ranged point being closed on. Every
+    other caller gets today's behaviour, and passing these anywhere else means
+    standing a safety rule down without that argument.
+
+    `min_points` goes with it. At the very end of a course the corridor's last
+    midpoint passes behind the car and the driven line is the goal anchor alone;
+    two points is the right floor for a CORRIDOR, whose single midpoint says
+    nothing trustworthy, and the wrong one for a measured object the car is
+    closing on.
     """
     reach = reach_of(line, origin)
 
     if pursuit is None:
         return DutyResult(0.0, "no steerable target", reach)
-    if len(line.points) < 2:
+    if len(line.points) < min_points:
         return DutyResult(0.0, "centerline too short", reach)
-    if reach < MIN_REACH_M:
+    if reach < min_reach_m:
         return DutyResult(0.0, f"corridor visible only {reach:.2f} m ahead", reach)
 
     scale = 1.0
