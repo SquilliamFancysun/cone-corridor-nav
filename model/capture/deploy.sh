@@ -21,8 +21,50 @@ HOST="${1:-robocar}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 
-# The car gets the tool by rsync, not by clone, so stamp the commit in by hand.
-git -C "$HERE" rev-parse --short HEAD > "$HERE/VERSION" 2>/dev/null || echo "unknown" > "$HERE/VERSION"
+# The car gets the tool by rsync, not by clone, so stamp the source revision in
+# by hand. This one line is the ONLY link from a running car back to the source
+# that produced it, so it carries three fields, not one:
+#
+#   <full sha> <branch> <tag|->
+#
+# The short sha alone was not enough, found the hard way. A collaborator
+# recovering a car whose VERSION read "34e18cd" had no branch to fetch, and
+# `git fetch origin 34e18cd` does not work: GitHub refuses to serve a bare sha
+# it has not advertised (uploadpack.allowReachableSHA1InWant is off there), and
+# says so in a message that reads as if the commit does not exist. They
+# concluded the commit was gone and rebuilt 2,800 files by rsyncing them back
+# off the Pi. The branch name is fetchable; the sha is not. Print both.
+DEPLOY_SHA="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"
+DEPLOY_BRANCH="$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+DEPLOY_TAG_NAME="${DEPLOY_TAG_NAME:-deploy/$(date +%Y%m%d-%H%M%S)}"
+[ "${DEPLOY_TAG:-1}" = "1" ] || DEPLOY_TAG_NAME="-"
+echo "$DEPLOY_SHA $DEPLOY_BRANCH $DEPLOY_TAG_NAME" > "$HERE/VERSION"
+
+# A commit that exists only on this laptop is a commit nobody else can fetch,
+# and that is exactly how the recovery above became necessary. Checked against
+# the remote-tracking refs, so it costs no network and works at the track --
+# which does mean it is only as fresh as the last fetch. Warn, never block: a
+# deploy of unpushed work is a normal thing to do at 3pm on a track day.
+REMOTE_HAS_HEAD="$(git -C "$HERE" branch -r --contains HEAD 2>/dev/null)"
+if [ "$DEPLOY_SHA" != "unknown" ] && [ -z "$REMOTE_HAS_HEAD" ]; then
+  echo
+  echo "warning:  $DEPLOY_BRANCH ($(git -C "$HERE" rev-parse --short HEAD)) is not on"
+  echo "          any remote branch this clone knows about. The car is about to run"
+  echo "          code that nobody else can fetch by name. Push it before the run:"
+  echo "              git push -u origin $DEPLOY_BRANCH"
+  echo
+fi
+
+# rsync copies the working tree, not the commit, so any local edit ships while
+# VERSION still names HEAD -- a stamp that describes something other than what
+# is running. --porcelain rather than `diff --quiet` because a brand new
+# untracked file gets deployed too and `diff` cannot see one. Ignored paths
+# (VERSION itself, calibration.json) are excluded by --porcelain already.
+if [ -n "$(git -C "$HERE" status --porcelain -- "$HERE" 2>/dev/null)" ]; then
+  echo "warning:  uncommitted changes under model/capture/ are being deployed."
+  echo "          VERSION will name $DEPLOY_BRANCH but the car gets your working tree."
+  echo
+fi
 
 # calibration.json is written on the car by `lidar_view.py --calibrate` and
 # describes this car's lidar mount. --delete would take it out on every deploy,
@@ -76,8 +118,36 @@ rsync -av "$REPO/data/routes/" "$HOST:cone_capture_tool/routes/"
 
 scp "$HERE/myconfig_capture.py" "$HOST:mycar/"
 
+# Tag the deploy so this exact revision is fetchable BY NAME forever, even if
+# the branch moves on. A tag is the thing a bare sha is not: advertised by the
+# remote, so `git fetch origin tag deploy/...` just works.
+#
+# Runs after every transfer above, deliberately. Pushing needs the network and
+# the car does not; at a track on a phone hotspot this can hang or fail, and
+# none of that may cost the deploy that already succeeded. GIT_TERMINAL_PROMPT=0
+# turns a missing credential into an error instead of a prompt that waits
+# forever for a keypress nobody is there to give. Set DEPLOY_TAG=0 to skip.
+if [ "${DEPLOY_TAG:-1}" = "1" ] && [ "$DEPLOY_SHA" != "unknown" ]; then
+  DEPLOY_TAG_MSG="Deployed to $HOST from $DEPLOY_BRANCH"
+  if git -C "$HERE" tag -a "$DEPLOY_TAG_NAME" -m "$DEPLOY_TAG_MSG" 2>/dev/null; then
+    PUSH="git -C $HERE push --quiet origin $DEPLOY_TAG_NAME"
+    if GIT_TERMINAL_PROMPT=0 $PUSH 2>/dev/null; then
+      echo "Tagged $DEPLOY_TAG_NAME and pushed it to origin."
+    else
+      echo "warning:  tagged $DEPLOY_TAG_NAME locally but could not push it."
+      echo "          The car's VERSION names a tag origin does not have. Push it"
+      echo "          when there is network:  git push origin $DEPLOY_TAG_NAME"
+    fi
+  else
+    echo "warning:  could not create tag $DEPLOY_TAG_NAME (it may already exist)."
+  fi
+fi
+
 echo
-echo "Deployed to $HOST:~/cone_capture_tool (commit $(cat "$HERE/VERSION"))"
+echo "Deployed to $HOST:~/cone_capture_tool"
+echo "  VERSION   $(cat "$HERE/VERSION")"
+echo "            (full sha, branch, deploy tag -- fetch the car's code by the"
+echo "             branch or the tag, never by the sha)"
 echo
 echo "On the car, one pane each — the lidar and the camera do not contend, so"
 echo "all three can run at once:"

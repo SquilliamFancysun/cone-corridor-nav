@@ -40,15 +40,28 @@ desktop app; the lidar tool serves a WebSocket the app connects to directly.
 
 ### Commit, then deploy — in that order
 
-The car has no git clone. `deploy.sh` writes `HEAD` into `VERSION`, and both
-tools copy that into every `session.json`. Deploy from a dirty tree, or amend
-after deploying, and the commit recorded in your data becomes unreachable.
+The car has no git clone. `deploy.sh` writes `<full sha> <branch> <deploy tag>`
+into `VERSION`, and both tools copy that into every `session.json`. Deploy from a
+dirty tree, or amend after deploying, and the commit recorded in your data
+becomes unreachable.
+
+Push before you deploy, not after. A commit that exists only on your laptop is
+one no teammate can fetch, and `deploy.sh` now warns when HEAD is not on any
+remote branch it knows about. It also tags each deploy `deploy/<timestamp>` and
+pushes the tag, so the exact revision stays fetchable by name even if the branch
+moves on.
 
 ```bash
 git status                      # must be clean, including the track spec
 git commit -am "..."            # if it is not
+git push                        # so the stamp names something others can fetch
 cd model/capture && ./deploy.sh      # defaults to the `robocar` ssh host
 ```
+
+To go the other way — from a car back to its source — read `VERSION` and fetch
+the **branch or the tag**. `git fetch origin <sha>` fails against GitHub with an
+error that reads like the commit is gone; see "Recovering the revision a car is
+running" in the top-level [`README.md`](../README.md).
 
 This rsyncs both tools to `~/cone_capture_tool/` and `myconfig_capture.py` to
 `~/mycar/`, then prints the three commands you will run on the car.

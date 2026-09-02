@@ -33,12 +33,16 @@ track, preflight, run all three panes, pull the data — see
 ```
 
 Copies both tools to `~/cone_capture_tool/`, `myconfig_capture.py` to
-`~/mycar/`, and stamps the git commit into `VERSION` (the car has no clone, so
-the commit recorded in each `session.json` comes from there).
+`~/mycar/`, and stamps `<full sha> <branch> <deploy tag>` into `VERSION` (the car
+has no clone, so the revision recorded in each `session.json` comes from there).
+It warns if HEAD is not on any remote branch, or if the tree is dirty, and it
+tags the deploy `deploy/<timestamp>` and pushes it. `DEPLOY_TAG=0 ./deploy.sh`
+skips the tag; a failed tag push warns but never costs the deploy.
 
-Commit first, then deploy, then capture. Amending or rebasing after a deploy
+Commit, push, then deploy, then capture. Amending or rebasing after a deploy
 makes the commit in every `session.json` unreachable and silently breaks
-provenance.
+provenance. To recover a car's source from its `VERSION`, fetch the branch or the
+tag — never the sha; see the top-level [`README.md`](../../README.md).
 
 Nothing to install for the camera: `depthai`, `cv2` and `donkeycar` are already
 in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants

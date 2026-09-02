@@ -232,11 +232,17 @@ toggle_manual_recording**, so a capture tool on either would E-stop the car or
 write junk tubs on every record toggle. _Rule:_ capture tools use **X (2)**,
 which DonkeyCar leaves unbound. Verified indices: `X=2, A=0, B=1, start=7`.
 
-**Deploy stamps the commit by hand.** The car has no git clone, so `deploy.sh`
-writes `HEAD` into `VERSION` and `capture_cones.py` copies that into every
-`session.json`. Amend or rebase after deploying and the recorded commit becomes
-unreachable — provenance silently breaks. _Rule:_ commit everything, including the
-track spec, **then** deploy, **then** capture.
+**Deploy stamps the revision by hand.** The car has no git clone, so
+`deploy.sh` writes `<full sha> <branch> <deploy tag>` into `VERSION` and
+`capture_cones.py` copies that into every `session.json`. Amend or rebase after
+deploying and the recorded commit becomes unreachable — provenance silently
+breaks. _Rule:_ commit everything including the track spec, **push**, **then**
+deploy, **then** capture.
+
+The stamp carries a branch and a tag, not just a sha, because a sha alone is not
+enough to get the code back: GitHub will not serve a bare unadvertised commit,
+and the refusal reads as if the commit does not exist. A recovery that believed
+it once rebuilt 2,800 files off the Pi rather than fetching one branch.
 
 **The lidar sees the car, and nothing is masking it.** Measured 2026-08-28 by
 `lidar_view.py --calibrate`: sensor bearings **20°–162°**, ranges **2–133 mm**,

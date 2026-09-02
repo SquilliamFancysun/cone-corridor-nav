@@ -43,6 +43,53 @@ pure function, and publish. This is what lets:
 
 ## Working on it
 
+### Which branch is live
+
+`hardware-baseline` is the branch the car runs. Everything on-car — the capture
+tool, perception, nav, the trial logs — lands there. `main` is the earlier
+milestone and is a week or more behind it at any given time; branch new work off
+`hardware-baseline`, not off `main`.
+
+Do not confuse the branch with [`docs/hardware-baseline.md`](docs/hardware-baseline.md),
+which is the *hardware* record — port map, cabling, device checks. The names
+collide, and grepping the repo for "hardware-baseline" finds the document, never
+the branch. That is a large part of how a collaborator once concluded the
+branch did not exist.
+
+### First time on this repo
+
+The repo is private, so a fresh clone needs credentials before anything else:
+
+```bash
+gh auth login            # then: git clone / git fetch work normally
+git fetch origin
+git switch hardware-baseline
+```
+
+If `git fetch` prompts for a password or returns 403, stop and fix auth. Do not
+work around it by copying files off the car — the car is a deploy target, not a
+source of truth, and it has no git clone at all (see
+[`model/capture/deploy.sh`](model/capture/deploy.sh)).
+
+### Recovering the revision a car is running
+
+`deploy.sh` stamps `model/capture/VERSION` on the car with three fields:
+
+```
+<full sha> <branch> <deploy tag>
+```
+
+Fetch it **by branch or by tag, never by the sha**:
+
+```bash
+git fetch origin hardware-baseline          # the branch it was deployed from
+git fetch origin tag deploy/20260901-155652 # or the exact deploy
+```
+
+`git fetch origin <sha>` does not work against GitHub. It refuses to serve a
+commit it has not advertised, and the error reads as though the commit does not
+exist. It is fetchable — you just have to ask for it by a name.
+
 **On the Mac (or any laptop, no ROS required):**
 
 ```bash
