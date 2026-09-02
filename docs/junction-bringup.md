@@ -336,6 +336,11 @@ python drive_junction.py --weights ~/models/best.pt --explore \
 
 `--route` and `--explore` are mutually exclusive and neither is a default.
 
+**Deploy first.** All of this is new code, and the car gets it by rsync rather
+than by clone, so stage 2's `./model/capture/deploy.sh` is not optional here. The
+usual rule applies: commit everything, *then* deploy, *then* run — otherwise the
+commit stamped into `VERSION` is unreachable and the run's provenance breaks.
+
 ### What is different, and what it costs
 
 **The goal is armed from the first tick.** On a route the goal lies past the last
@@ -422,11 +427,17 @@ python drive_junction.py --weights ~/models/best.pt \
 ```
 
 No new driving code is involved; this is the same tool reading the same route
-format a human would have written. **That run is also the one to build the map
-from** — a clean single pass with no lifts in it:
+format a human would have written.
+
+**That run is also the one to build the map from** — a clean single pass with no
+lifts in it. But the map is built **off the car**: `deploy.sh` sends
+`model/capture/`, the two pure packages and `data/routes/`, and nothing else, so
+neither `analysis/` nor `data/layouts/` is over there. Pull the log back first.
 
 ```sh
-python analysis/map_from_log.py optimal-1.jsonl --layout data/layouts/track_v1.csv
+# at the desk, not on the car
+scp robocar:cone_capture_tool/optimal-1.jsonl data/trials/
+python analysis/map_from_log.py data/trials/optimal-1.jsonl --layout data/layouts/track_v1.csv
 ```
 
 ### When it goes wrong
