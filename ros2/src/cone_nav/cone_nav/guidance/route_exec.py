@@ -15,9 +15,11 @@ dead end at the first junction and reports nothing unusual in the log.
 
 ## Why the cursor cannot be advanced by distance
 
-There is no odometry anywhere in this repo -- every tick is computed fresh in
-base_link and nothing integrates. So a route entry is consumed when
-`topo_state` says a gate was passed, and never on a timer or a travelled
+`cone_perception/ego_motion.py` measures travel and
+`cone_perception/odometry.py` sums it, but neither is allowed near this
+decision: the sum is a random walk, and a route entry consumed by a drifting
+distance is every later junction taking the wrong turn. So an entry is consumed
+when `topo_state` says a gate was passed, and never on a timer or a travelled
 distance. `advance()` is deliberately dumb about *when*; owning that decision is
 `topo_state`'s job, and the debounce lives there.
 """
@@ -97,6 +99,44 @@ class RouteCursor(object):
     @property
     def remaining(self):
         return max(0, len(self.turns) - self.index)
+
+    @property
+    def path(self):
+        """The turns consumed so far -- how the car got where it is.
+
+        `cone_nav/topology/graph_builder.py` identifies a node by this, so both
+        cursor implementations have to offer it. On a provided route it is a
+        prefix of the file; `ExplorePolicy` derives the same thing from its
+        search stack, which is what lets one graph builder serve both.
+        """
+        return self.turns[:self.index]
+
+    @property
+    def goal_armed(self):
+        """May a magenta stop the car yet? Only once the route is spent.
+
+        The goal lies past the last junction by construction, so a magenta seen
+        with turns outstanding is a misread -- and magenta/red is the detector's
+        hardest pair. `cone_nav/guidance/explore.py` answers this differently,
+        and says why.
+        """
+        return self.exhausted
+
+    def dead_end(self):
+        """The corridor ran out while a turn was still outstanding.
+
+        There is nothing to recover here and nothing to consume. A provided
+        route names the branch to take at each junction; if that branch ends in
+        a wall then either the route is wrong or a junction was misread, and
+        both are faults to stop and read the log over rather than to drive
+        through. `ExplorePolicy` is the implementation that can answer this
+        question, because it is the one that chose the branch.
+
+        The route entry is deliberately NOT consumed, for the same reason
+        `topo_state`'s traverse timeout keeps it: the turn was not demonstrably
+        taken.
+        """
+        return None
 
     def advance(self):
         """Consume the current turn. Idempotent past the end.
