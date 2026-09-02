@@ -12,11 +12,30 @@ import pytest
 
 import drive_junction
 from cone_nav.guidance import goal_stop
-from cone_nav.topology import topo_state
+from cone_nav.guidance.explore import ExplorePolicy
+from cone_nav.topology import dead_end, graph_builder, topo_state
+from cone_perception import ego_motion, odometry
+
+
+class _FakeCone(object):
+    def __init__(self, x=1.0, y=0.0):
+        self.x = x
+        self.y = y
+
+
+class _FakeLine(object):
+    def __init__(self, reach):
+        self.points = [(0.5, 0.0), (reach, 0.0)]
+        self.single_boundary_fallback = False
+
+
+def _cones(n=8):
+    return [_FakeCone(x=0.5 * i) for i in range(n)]
 
 ROUTE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "..", "..", "data", "routes", "route_v1.txt")
 BASE = ["--dry-run", "--no-deadman", "--route", os.path.normpath(ROUTE)]
+EXPLORE = ["--dry-run", "--no-deadman", "--explore"]
 
 
 # --- arguments ----------------------------------------------------------
@@ -26,11 +45,39 @@ def test_the_route_is_loaded_and_validated():
     assert args.route_turns == ["left", "right"]
 
 
-def test_a_route_is_required():
-    """Without one the car has no way to choose a branch, and choosing wrong at
-    a junction is worse than not driving."""
+def test_some_way_of_choosing_a_branch_is_required():
+    """Without a route or --explore the car has no way to choose a branch, and
+    choosing wrong at a junction is worse than not driving."""
     with pytest.raises(SystemExit):
         drive_junction.parse_args(["--dry-run", "--no-deadman"])
+
+
+def test_a_route_and_explore_together_are_refused():
+    """There is no sensible reading of both: one says which way to turn, the
+    other decides on the spot. Silently preferring either is a car that turns
+    somewhere the operator did not expect."""
+    with pytest.raises(SystemExit):
+        drive_junction.parse_args(BASE + ["--explore"])
+
+
+def test_explore_needs_no_route_file():
+    args = drive_junction.parse_args(EXPLORE)
+    assert args.explore
+    assert args.route_turns == []
+
+
+def test_the_first_branch_to_try_is_settable():
+    assert drive_junction.parse_args(EXPLORE).explore_first == "left"
+    args = drive_junction.parse_args(EXPLORE + ["--explore-first", "right"])
+    assert args.explore_first == "right"
+
+
+def test_emitting_a_route_without_exploring_is_refused():
+    """On a provided route the emitted file would be the route it was given,
+    minus any branch that turned out to be a wall -- a finding to read in the
+    log, not a file to drive."""
+    with pytest.raises(SystemExit):
+        drive_junction.parse_args(BASE + ["--emit-route", "/tmp/x.txt"])
 
 
 def test_a_bad_route_file_is_refused_before_the_camera_opens(tmp_path):
@@ -395,3 +442,70 @@ def test_a_magenta_does_not_stop_the_car_while_a_turn_is_outstanding():
             goal_latch=latch, goal_armed=False)
     assert not latch.stopped
     assert not latch.confirmed
+
+
+# --- exploring ----------------------------------------------------------
+
+def test_exploring_arms_the_goal_from_the_start_and_says_so(capsys):
+    """A maze puts the goal wherever it likes, so the route-spent rule cannot
+    apply -- and the warning matters, because magenta read as red is 15% on v3."""
+    args = drive_junction.parse_args(EXPLORE)
+    drive_junction.announce(args)
+    out = capsys.readouterr().out
+    assert "ARMED FROM THE START" in out
+    assert "wherever it likes" in out
+
+
+def test_a_route_run_still_says_the_goal_waits_for_the_last_turn(capsys):
+    drive_junction.announce(drive_junction.parse_args(BASE))
+    out = capsys.readouterr().out
+    assert "armed once the route is spent" in out
+    assert "left, right" in out
+
+
+def test_the_status_record_carries_the_dead_end_and_the_pose():
+    latch = dead_end.DeadEndLatch()
+    latch.update(_FakeLine(0.4), _cones(), oranges=[_FakeCone(1.0, 0.0)])
+    pose = odometry.Pose().integrate(ego_motion.Step(1.5, 0.0, 0.0, 4))
+    maze = graph_builder.MazeMap()
+    maze.record_pass([], "left", length_m=2.0)
+    maze.record_dead_end(["left"])
+
+    status = drive_junction.status_of(
+        {}, None, None, 0, dead_end_latch=latch, pose=pose, maze=maze)
+    assert status["dead_end_state"] == "clear"
+    assert "confirming" in status["dead_end_reason"]
+    assert status["dead_end_reach_m"] == pytest.approx(0.4)
+    assert status["pose_x"] == pytest.approx(1.5)
+    assert status["maze_nodes"] == 2
+    assert status["maze_dead_ends"] == 1
+
+
+def test_status_of_survives_having_none_of_the_new_machinery():
+    """Same contract the goal and the topology already have: every field is
+    present with a neutral value, so the log schema never gains holes."""
+    status = drive_junction.status_of({}, None, None, 0)
+    assert status["dead_end_state"] == ""
+    assert status["pose_x"] == 0.0
+    assert status["explore_path"] == ""
+    assert status["maze_nodes"] == 0
+
+
+def test_the_explored_path_is_reported_for_the_log():
+    topo = topo_state.TopoState(ExplorePolicy())
+    topo.cursor.advance()
+    topo.cursor.advance()
+    status = drive_junction.status_of({}, topo, None, 0)
+    assert status["explore_path"] == "left/left"
+
+
+def test_the_dead_end_latch_is_held_down_through_a_junction_mouth():
+    """The mouth is exactly a stretch of short, one-sided line -- topo_state's
+    own docstring says the corridor 'looks healthy for the whole approach' and
+    then does not. A dead end declared there would reverse the car out of a
+    junction it was correctly driving."""
+    latch = dead_end.DeadEndLatch()
+    for _ in range(50):
+        latch.update(_FakeLine(0.3), _cones(), oranges=[_FakeCone(1.0, 0.0)],
+                     armed=False)
+    assert not latch.latched

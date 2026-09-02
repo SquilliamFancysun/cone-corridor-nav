@@ -65,11 +65,14 @@ from cone_nav.control import pure_pursuit, speed_ctrl
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
-from cone_nav.guidance import goal_stop, junction_exec
+from cone_nav.corridor.boundary_split import split
+from cone_nav.guidance import goal_stop, junction_exec, planner
+from cone_nav.guidance.explore import ExplorePolicy
 from cone_nav.guidance.route_exec import RouteCursor, load_route
-from cone_nav.topology import gate_detect, goal_detect, topo_state
+from cone_nav.topology import (dead_end, gate_detect, goal_detect,
+                               graph_builder, topo_state)
 from cone_perception import (clustering, ego_motion, extrinsics, fusion,
-                             label_memory)
+                             label_memory, odometry)
 from drive_corridor import (
     DEFAULT_PORT_WS,
     MAX_SCAN_AGE_S,
@@ -108,6 +111,19 @@ JUNCTION_STATUS_SCHEMA = {
         travelled_m={"type": "number", "description": "since commit"},
         odo_forward_m={"type": "number", "description": "this tick's scan-matched travel; the dry run's odometry"},
         odo_pairs={"type": "integer", "description": "cones the odometry step was fitted on; 0 = no measurement"},
+        odo_lateral_m={"type": "number", "description": "this tick's scan-matched sideways travel"},
+        odo_yaw_deg={"type": "number", "description": "this tick's scan-matched turn, left positive"},
+        pose_x={"type": "number", "description": "integrated position in the frame the run started in. A random walk -- nothing steers by it"},
+        pose_y={"type": "number"},
+        pose_yaw_deg={"type": "number"},
+        pose_measured={"type": "integer", "description": "ticks the pose was advanced by a real measurement. Below `t`*rate means the run has blind stretches in it"},
+        dead_end_state={"type": "string", "description": "clear / dead_end"},
+        dead_end_reason={"type": "string", "description": "why the corridor is or is not judged to have ended. The first field to read when a backtrack fires or fails to"},
+        dead_end_reach_m={"type": "number", "description": "reach of the UNANCHORED corridor line, which is what the decision is made on"},
+        explore_path={"type": "string", "description": "turns taken to reach where the car is -- the maze node's identity"},
+        maze_nodes={"type": "integer"},
+        maze_edges={"type": "integer"},
+        maze_dead_ends={"type": "integer"},
         topo_note={"type": "string"},
         goal_state={"type": "string", "description": "seeking / run_in / stopped"},
         goal_range_m={"type": "number", "description": "to the goal, measured if seen this tick else carried"},
@@ -137,7 +153,7 @@ JUNCTION_SCHEMA = {
 def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                    axis_rad=0.0, topo=None, previous_line=None,
                    travel_m=0.0, yaw_delta_rad=0.0, red_memory=None,
-                   goal_latch=None, goal_armed=False):
+                   goal_latch=None, goal_armed=False, dead_end_latch=None):
     """One revolution -> cones, centerline, steering, duty, plus the manoeuvre.
 
     Identical to `drive_corridor.drive_pipeline` up to the fill and after the
@@ -233,12 +249,22 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle,
                            min_reach_m=0.0 if run_in else speed_ctrl.MIN_REACH_M,
                            min_points=1 if run_in else 2)
+    if dead_end_latch is not None:
+        # On the UNANCHORED line: an anchor is a point threaded onto the driven
+        # line, so judging reach from `line` would credit the corridor with a
+        # gate or a trophy it does not contain. Held down wherever the corridor
+        # is ALLOWED to end -- through a mouth, and over the goal run-in. See
+        # cone_nav/topology/dead_end.py.
+        dead_end_latch.update(
+            corridor_line, cones, oranges=split(cones).dead_ends,
+            armed=not engaged and not run_in, origin=axle)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
             junction, dropped, survey, remembered, goal_survey)
 
 
 def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
-              goal_latch=None, goal_armed=False):
+              goal_latch=None, goal_armed=False, dead_end_latch=None,
+              pose=None, maze=None):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
     live = topo.live if topo else None
@@ -284,14 +310,46 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         goal_blind_ticks=goal_latch.blind_ticks if goal_latch else 0,
         goal_hops=goal_latch.hops if goal_latch else 0,
         goal_note=goal_latch.note if goal_latch else "",
+        # The dead end, on the same principle as `gate_reason` and
+        # `goal_reason`: a corridor that reaches too far, a car with nothing in
+        # view and a wall are different states, and `dead_end_state` shows none
+        # of them.
+        dead_end_state=dead_end_latch.state if dead_end_latch else "",
+        dead_end_reason=dead_end_latch.reason if dead_end_latch else "",
+        dead_end_reach_m=(round(dead_end_latch.reach_m, 3)
+                          if dead_end_latch else 0.0),
+        pose_x=round(pose.x, 3) if pose else 0.0,
+        pose_y=round(pose.y, 3) if pose else 0.0,
+        pose_yaw_deg=round(pose.yaw_deg, 1) if pose else 0.0,
+        pose_measured=pose.measured if pose else 0,
+        explore_path="/".join(topo.cursor.path) if topo else "",
+        maze_nodes=len(maze.nodes) if maze else 0,
+        maze_edges=(sum(len(e) for e in maze.edges.values()) if maze else 0),
+        maze_dead_ends=(len(maze.find(graph_builder.DEAD_END))
+                        if maze else 0),
     )
 
 
 def parse_args(argv=None):
     parser = build_parser(description="Autonomous cone-junction navigation.")
-    parser.add_argument("--route", required=True,
+    parser.add_argument("--route",
                         help="path to a route file: one 'left' or 'right' per "
-                             "junction, in order. See data/routes/")
+                             "junction, in order. See data/routes/. Mutually "
+                             "exclusive with --explore")
+    parser.add_argument("--explore", action="store_true",
+                        help="decide each junction on the spot instead of "
+                             "reading a route: take a branch, and if it dead-"
+                             "ends back out and take the other. Builds a map "
+                             "as it goes; see --emit-route")
+    parser.add_argument("--explore-first", default="left",
+                        choices=["left", "right"],
+                        help="which branch --explore tries first at a junction "
+                             "it has not seen before (default: left)")
+    parser.add_argument("--emit-route", metavar="PATH",
+                        help="on exit, write the route from the start to the "
+                             "goal implied by what was explored -- the driven "
+                             "path with its dead ends removed. Drive it with "
+                             "--route")
     parser.add_argument("--goal-stop", type=float,
                         default=goal_stop.STOP_RANGE_M,
                         help="metres from the lidar -- the front of the car -- "
@@ -340,10 +398,25 @@ def parse_args(argv=None):
         parser.error("--no-camera cannot work at a junction: the gate is red, "
                      "and geometry cannot tell red from a boundary cone. It is "
                      "valid on a plain corridor -- use drive_corridor.py.")
-    try:
-        args.route_turns = load_route(args.route)
-    except ValueError as exc:
-        parser.error(str(exc))
+    if bool(args.route) == bool(args.explore):
+        parser.error(
+            "pass exactly one of --route and --explore. A route says which way "
+            "to turn at\n       each junction; --explore decides that on the "
+            "spot. There is no sensible\n       reading of both, and neither "
+            "is a default.")
+
+    args.route_turns = []
+    if args.route:
+        try:
+            args.route_turns = load_route(args.route)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if args.emit_route and not args.explore:
+        parser.error(
+            "--emit-route needs --explore. On a provided route the emitted "
+            "file would be\n       the route it was given, minus any branch "
+            "that turned out to be a wall --\n       which is a finding to "
+            "read in the log, not a file to drive.")
     return args
 
 
@@ -368,12 +441,28 @@ def dry_run_travel(step, deadband_m=ego_motion.DEADBAND_M):
 
 
 def announce(args):
-    turns = ", ".join(args.route_turns)
-    print(f"route     {len(args.route_turns)} junction(s): {turns}")
-    print(f"           from {args.route}")
-    print(f"goal      stop {args.goal_stop} m from the lidar"
-          + ("   (ARMED FROM THE START)" if args.goal_anywhere else
-             "   (armed once the route is spent)"))
+    if args.explore:
+        print(f"explore   no route: deciding at each junction, trying "
+              f"{args.explore_first} first")
+        print("           a dead end backs the search out and takes the other "
+              "branch")
+        if args.emit_route:
+            print(f"           the route to the goal will be written to "
+                  f"{args.emit_route}")
+    else:
+        turns = ", ".join(args.route_turns)
+        print(f"route     {len(args.route_turns)} junction(s): {turns}")
+        print(f"           from {args.route}")
+    armed_when = ("   (ARMED FROM THE START)"
+                  if args.goal_anywhere or args.explore else
+                  "   (armed once the route is spent)")
+    print(f"goal      stop {args.goal_stop} m from the lidar" + armed_when)
+    if args.explore and not args.goal_anywhere:
+        print("           armed throughout because a maze puts the goal "
+              "wherever it likes.\n"
+              "           Magenta read as red is the detector's hardest pair "
+              "(15% on v3), so a\n"
+              "           false stop mid-course is the failure to watch for.")
     if args.no_audio:
         print("audio     disabled")
     else:
@@ -461,8 +550,18 @@ def main(argv=None):
     # clock. Under power the driving bound stands.
     red_memory = label_memory.RedMemory()
     goal_latch = goal_stop.GoalLatch(stop_range_m=args.goal_stop)
+    dead_end_latch = dead_end.DeadEndLatch()
+    # The pose is read by the map and by the report, and by nothing that
+    # steers. See cone_perception/odometry.py on why that line matters.
+    pose = odometry.Pose()
+    maze = graph_builder.MazeMap()
+    last_node_pose = pose.snapshot()
+    # `ExplorePolicy` and `RouteCursor` implement the same five members and two
+    # events, which is why swapping them needs no change to `topo_state`.
+    cursor = (ExplorePolicy(first=args.explore_first) if args.explore
+              else RouteCursor(args.route_turns))
     topo = topo_state.TopoState(
-        RouteCursor(args.route_turns),
+        cursor,
         max_traverse_ticks=(topo_state.MAX_TRAVERSE_TICKS * 3
                             if args.dry_run else
                             topo_state.MAX_TRAVERSE_TICKS))
@@ -480,6 +579,9 @@ def main(argv=None):
     last_state = topo.state
     last_goal_state = goal_latch.state
     was_armed = False
+    was_dead_end = False
+    was_at_goal = False
+    driven_turns = []
     loops = 0
     audio = audio_playback.AudioController(
         drive_audio=args.drive_audio,
@@ -505,6 +607,21 @@ def main(argv=None):
             if armed and not was_armed and goal_latch.stopped:
                 goal_latch.release()
                 print("  [goal released] X re-pressed -- driving again")
+
+            # And clears a dead end, which is what makes an operator-assisted
+            # backtrack possible before `reverse_ctrl` exists: the car stops at
+            # the wall, the search has ALREADY taken the other branch (the
+            # cursor moved when the latch fired), someone carries the car back
+            # to the junction, and X re-pressed drives it down the branch it
+            # has not tried. The map records the same thing either way.
+            if armed and not was_armed and dead_end_latch.latched:
+                dead_end_latch.release()
+                print(f"  [dead end released] X re-pressed -- now taking "
+                      f"{topo.cursor.current or '-'}")
+
+            # All three read `was_armed` before it is overwritten below, so
+            # the audio latches on the same rising edge the goal and the dead
+            # end release on.
             audio_playback.update_for_deadman(audio, armed, was_armed)
             was_armed = armed
 
@@ -525,14 +642,23 @@ def main(argv=None):
             # magenta seen while a turn is still outstanding is a misread and
             # must not be allowed to stop the car. --goal-anywhere overrides
             # this for bring-up on a corridor with no junction in it.
-            goal_armed = args.goal_anywhere or topo.cursor.exhausted
+            # Read before `drive_pipeline`, which calls `topo.update` and so
+            # may consume the turn and move the path out from under them.
+            path_before = list(topo.cursor.path)
+            turn_before = topo.turn
+
+            # `goal_armed` is the cursor's own answer: a route arms the goal
+            # once it is spent, exploring arms it throughout. See
+            # cone_nav/guidance/explore.py.
+            goal_armed = args.goal_anywhere or topo.cursor.goal_armed
             (result, cones, filled, line, pursuit, duty, corridor_line,
              junction, dropped, survey, remembered,
              goal_survey) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
                 yaw_delta_rad=yaw_delta_rad, red_memory=red_memory,
-                goal_latch=goal_latch, goal_armed=goal_armed)
+                goal_latch=goal_latch, goal_armed=goal_armed,
+                dead_end_latch=dead_end_latch)
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
@@ -543,6 +669,34 @@ def main(argv=None):
             odo_step = (ego_motion.rigid_step(previous_cones, result.cones)
                         if previous_cones is not None else None)
             previous_cones = result.cones
+            pose.integrate(odo_step)
+
+            # The two events the map is built from, and the one the search acts
+            # on. Both keys are taken BEFORE the machine that consumes them
+            # moves: `topo_state` advances the cursor inside `update`, so
+            # `path_before` and `turn_before` are captured at the top of the
+            # tick, and the dead end is recorded before `cursor.dead_end()`
+            # unwinds the stack out from under it.
+            if topo.note == "passed":
+                driven_turns.append(turn_before)
+                maze.record_pass(path_before, turn_before, length_m=(
+                    odometry.distance_between(last_node_pose, pose.snapshot())))
+                last_node_pose = pose.snapshot()
+
+            if dead_end_latch.latched and not was_dead_end:
+                maze.record_dead_end(topo.cursor.path)
+                resume = topo.cursor.dead_end()
+                last_node_pose = pose.snapshot()
+                print(f"  [DEAD END] {dead_end_latch.reason}")
+                print("             " + (
+                    f"back out to the last junction and take {resume}"
+                    if resume else
+                    "nothing left to explore -- every branch has been tried"))
+            was_dead_end = dead_end_latch.latched
+
+            if goal_latch.stopped and not was_at_goal:
+                maze.record_goal(topo.cursor.path)
+            was_at_goal = goal_latch.stopped
 
             target_duty = duty.duty
             if not armed:
@@ -553,6 +707,12 @@ def main(argv=None):
                 # The run is over. Held here rather than inside `speed_ctrl` so
                 # that every gate which can stop this car stays in one place,
                 # the way `armed` and --steer-only already are.
+                target_duty = 0.0
+            if dead_end_latch.latched:
+                # `speed_ctrl`'s reach floor has almost certainly stopped the
+                # car already -- that collapse is what the latch fired on. This
+                # is here so the stop is stated rather than incidental, and so
+                # it holds if a future reach rule would not.
                 target_duty = 0.0
             duty_now = speed_ctrl.ramp(duty_now, target_duty)
 
@@ -592,6 +752,8 @@ def main(argv=None):
                 scan_age, detection_age, loops / elapsed if elapsed else 0.0,
                 commanded=steer)
             status = status_of(base, topo, junction, dropped, survey,
+                               dead_end_latch=dead_end_latch, pose=pose,
+                               maze=maze,
                                goal_survey=goal_survey, goal_latch=goal_latch,
                                goal_armed=goal_armed)
             if goal_latch.stopped:
@@ -603,6 +765,9 @@ def main(argv=None):
 
             status["labeled_by_memory"] = remembered
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
+            status["odo_lateral_m"] = round(odo_step.lateral_m, 4) if odo_step else 0.0
+            status["odo_yaw_deg"] = (round(math.degrees(odo_step.yaw_rad), 3)
+                                     if odo_step else 0.0)
             status["odo_pairs"] = odo_step.pairs if odo_step else 0
 
             wall = time.time()
@@ -720,16 +885,50 @@ def main(argv=None):
             server.stop()
         if log.path:
             print(f"wrote {log.rows} ticks to {log.path}")
-        if topo.cursor.remaining:
+        if args.explore:
+            # `remaining` means something different here: branches the car
+            # found and did not try, not route entries left unread. A run that
+            # ends with some is a partial map, which is honest and still
+            # plannable -- as long as the goal is in it.
+            print(f"maze      {maze.summary()}, "
+                  f"{len(driven_turns)} gate(s) driven")
+            print(f"           ended at "
+                  f"{'/'.join(topo.cursor.path) or 'the start'}")
+            if topo.cursor.remaining:
+                print(f"           {topo.cursor.remaining} branch(es) found "
+                      "but never tried")
+        elif topo.cursor.remaining:
             print(f"warning:  {topo.cursor.remaining} junction(s) of the route "
                   "were never taken")
+
         if goal_latch.stopped:
             print(f"reached the goal, stopped {goal_latch.range_m:.2f} m from it"
                   + (" ON A CARRIED ESTIMATE -- the camera had lost it"
                      if "carried" in goal_latch.note else ""))
-        elif not topo.cursor.remaining:
+        elif not args.explore and not topo.cursor.remaining:
             print("warning:  the route was completed but the goal was never "
                   "reached")
+
+        if args.emit_route:
+            # Written here rather than on arrival so that a run ended by Ctrl-C
+            # or by a lunge for the car still emits whatever it had mapped --
+            # which is the run most worth having the file from.
+            try:
+                turns = planner.route_to_goal(maze)
+            except planner.NoRouteError as exc:
+                print(f"warning:  no route written to {args.emit_route}: {exc}")
+            else:
+                _, drove, avoided = planner.saving(maze, driven_turns)
+                planner.write_route(
+                    turns, args.emit_route,
+                    note=(f"Explored {time.strftime('%Y-%m-%d %H:%M')}. "
+                          f"{maze.summary()}.\n"
+                          f"Driven {drove} gates while exploring; this route "
+                          f"is {len(turns)}, avoiding {avoided}."))
+                print(f"wrote {args.emit_route}: "
+                      f"{', '.join(turns) or '(no turns)'}")
+                print(f"           {drove} gate(s) driven exploring, "
+                      f"{len(turns)} on this route -- {avoided} avoided")
     return 0
 
 
