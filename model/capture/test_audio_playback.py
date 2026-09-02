@@ -60,15 +60,19 @@ class FakePopen:
 class RecordingAudio:
     def __init__(self):
         self.events = []
+        self.state = STOPPED
 
     def start_driving(self):
         self.events.append(DRIVING)
+        self.state = DRIVING
 
     def goal_reached(self):
         self.events.append(GOAL)
+        self.state = GOAL
 
     def stop(self):
         self.events.append(STOPPED)
+        self.state = STOPPED
 
 
 def wait_for(predicate, timeout=1.0):
@@ -128,6 +132,26 @@ class AudioControllerTest(unittest.TestCase):
 
         self.assertTrue(driving_process.terminated)
         self.assertEqual(self.popen.calls[1][0][-1], str(self.goal))
+        self.assertEqual(self.audio.state, GOAL)
+
+    def test_driving_track_loops_after_natural_end(self):
+        self.audio.start_driving()
+        wait_for(lambda: len(self.popen.calls) == 1)
+
+        self.popen.processes[0].returncode = 0
+        wait_for(lambda: len(self.popen.calls) == 2)
+
+        self.assertEqual(self.popen.calls[1][0][-1], str(self.drive))
+        self.assertEqual(self.audio.state, DRIVING)
+
+    def test_goal_track_does_not_loop(self):
+        self.audio.goal_reached()
+        wait_for(lambda: len(self.popen.calls) == 1)
+
+        self.popen.processes[0].returncode = 0
+        time.sleep(0.15)
+
+        self.assertEqual(len(self.popen.calls), 1)
         self.assertEqual(self.audio.state, GOAL)
 
     def test_stop_terminates_current_track(self):
@@ -203,13 +227,21 @@ class DriveEventIntegrationTest(unittest.TestCase):
         update_for_deadman(self.audio, armed=True, was_armed=False)
         self.assertEqual(self.audio.events, [DRIVING])
 
-    def test_deadman_falling_edge_stops_driving_track(self):
+    def test_deadman_falling_edge_leaves_driving_track_latched(self):
+        self.audio.state = DRIVING
         update_for_deadman(self.audio, armed=False, was_armed=True)
-        self.assertEqual(self.audio.events, [STOPPED])
+        self.assertEqual(self.audio.events, [])
 
-    def test_release_after_goal_does_not_cut_off_finish_clip(self):
-        update_for_deadman(
-            self.audio, armed=False, was_armed=True, goal_stopped=True)
+    def test_later_x_presses_do_not_restart_driving_track(self):
+        self.audio.state = DRIVING
+        update_for_deadman(self.audio, armed=True, was_armed=False)
+        update_for_deadman(self.audio, armed=False, was_armed=True)
+        update_for_deadman(self.audio, armed=True, was_armed=False)
+        self.assertEqual(self.audio.events, [])
+
+    def test_press_after_goal_does_not_cut_off_finish_clip(self):
+        self.audio.state = GOAL
+        update_for_deadman(self.audio, armed=True, was_armed=False)
         self.assertEqual(self.audio.events, [])
 
     def test_only_transition_into_stopped_plays_finish_clip(self):

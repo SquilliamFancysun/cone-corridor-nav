@@ -925,11 +925,12 @@ geometry cannot infer red from position.
 
 ### Driving audio
 
-`drive_junction.py` plays `audio/DrivingSound.mp3` while X is held. Releasing X
-stops that track, and pressing X again starts it from the beginning. When the
-goal latch reaches `stopped`, the driving track is replaced by
-`audio/EndSound.mp3` exactly once; releasing X after arrival does not cut the
-finish clip off. Ctrl-C and every normal shutdown path stop either player.
+The first X press latches on `audio/DrivingSound.mp3`. It keeps playing through
+later X releases, path loss, and junction handling, and loops if it ends before
+the run does. When the goal latch reaches `stopped`, the driving track is
+replaced by `audio/EndSound.mp3` exactly once. Later X presses do not restart
+the driving track or cut off the finish clip. Ctrl-C and every normal shutdown
+path stop either player.
 
 Playback uses `pw-play` on PipeWire's default sink and runs outside the control
 loop. `--audio-volume 0.0..1.0` changes the stream volume,
