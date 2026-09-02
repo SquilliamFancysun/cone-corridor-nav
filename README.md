@@ -127,3 +127,25 @@ any change to cabling, ports, or power.
   the code that plays it IS in git.
 - **Rosbags** (`*.db3`, `*.mcap`) — trial CSV summaries and analysis outputs ARE
   in git.
+
+The audio arrived on a feature branch as two committed mp3s. A file deleted in a
+later commit still ships with every default `git clone` — measured at 7017 KB
+against 78 KB for the same tree without it — so the commit that added them was
+dropped before this branch was first pushed, rather than removed in a follow-up
+commit that would have kept the blobs reachable forever. Nothing in
+`hardware-baseline` history has ever contained them.
+
+**Outstanding local cleanup.** The rebase that did this left a backup branch,
+`pre-mp3-strip-backup`, on the machine it was run from (Windows, September 2026).
+It was never pushed, so it costs nobody else anything, but it is the last thing
+holding the 6.8 MB of dropped mp3 blobs in that clone. Once the pushed branch
+has been checked over:
+
+```bash
+git branch -D pre-mp3-strip-backup
+git gc --prune=now                  # reclaims the blobs
+```
+
+Not urgent, and safe to leave: it is 6.8 MB of local disk and nothing more.
+Deleting it is not reversible, though — after `gc` the pre-rebase chain survives
+only in the reflog, for 90 days.
