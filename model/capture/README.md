@@ -923,6 +923,21 @@ python drive_junction.py --weights ~/models/best.pt \
 `--no-camera` is refused here rather than warned about: the gate is red, and
 geometry cannot infer red from position.
 
+### Driving audio
+
+`drive_junction.py` plays `audio/DrivingSound.mp3` while X is held. Releasing X
+stops that track, and pressing X again starts it from the beginning. When the
+goal latch reaches `stopped`, the driving track is replaced by
+`audio/EndSound.mp3` exactly once; releasing X after arrival does not cut the
+finish clip off. Ctrl-C and every normal shutdown path stop either player.
+
+Playback uses `pw-play` on PipeWire's default sink and runs outside the control
+loop. `--audio-volume 0.0..1.0` changes the stream volume,
+`--audio-target NAME` pins a particular PipeWire sink, and `--no-audio`
+restores the original silent behavior. Alternate files can be selected with
+`--drive-audio PATH` and `--goal-audio PATH`. Audio failures print a warning but
+do not change steering, throttle, deadman, or goal-stop behavior.
+
 ### Reading the log
 
 Every `drive_corridor.py` field, plus `topo_state`, `turn`, `route_index`,

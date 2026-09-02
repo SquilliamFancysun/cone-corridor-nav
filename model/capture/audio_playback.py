@@ -24,6 +24,26 @@ CLOSED = "closed"
 _CLOSE = object()
 
 
+def update_for_deadman(audio, armed, was_armed, goal_stopped=False):
+    """Apply one deadman edge to an ``AudioController``-like object.
+
+    Releasing X normally silences the driving track. After arrival it must not
+    cut off the one-shot finish clip, so a falling edge is ignored while the
+    goal latch is stopped. Re-arming after the latch is released starts the
+    driving track again.
+    """
+    if armed and not was_armed:
+        audio.start_driving()
+    elif not armed and was_armed and not goal_stopped:
+        audio.stop()
+
+
+def update_for_goal(audio, goal_stopped, state_changed):
+    """Play the finish clip only on the transition into goal-stopped."""
+    if state_changed and goal_stopped:
+        audio.goal_reached()
+
+
 class AudioController:
     """Play driving and goal audio without blocking the caller.
 
@@ -185,4 +205,3 @@ class AudioController:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
-

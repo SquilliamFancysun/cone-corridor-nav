@@ -56,6 +56,7 @@ if not os.path.isdir(os.path.join(_HERE, "cone_perception")):
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import audio_playback
 import detectors
 import drive_corridor
 import fusion_view
@@ -302,7 +303,26 @@ def parse_args(argv=None):
                              "turns left. FOR BRING-UP on a corridor with no "
                              "junction; on the track it lets a misread red stop "
                              "the car mid-course")
+    parser.add_argument("--drive-audio",
+                        default=str(audio_playback.DEFAULT_DRIVE_AUDIO),
+                        help="main track played while X is held")
+    parser.add_argument("--goal-audio",
+                        default=str(audio_playback.DEFAULT_GOAL_AUDIO),
+                        help="finish clip played once when the goal stops the "
+                             "car")
+    parser.add_argument("--audio-volume", type=float, default=1.0,
+                        help="pw-play stream volume from 0.0 to 1.0. The USB "
+                             "speaker's own sink volume still applies")
+    parser.add_argument("--audio-target", default=None,
+                        help="optional PipeWire sink name. Defaults to the "
+                             "system's selected output")
+    parser.add_argument("--no-audio", action="store_true",
+                        help="run the original driving behavior without "
+                             "starting an audio player")
     args = finalise_args(parser, parser.parse_args(argv))
+
+    if not 0.0 <= args.audio_volume <= 1.0:
+        parser.error("--audio-volume must be between 0.0 and 1.0")
 
     if args.goal_stop < clustering.MIN_CONE_RANGE_M:
         parser.error(
@@ -353,6 +373,13 @@ def announce(args):
     print(f"goal      stop {args.goal_stop} m from the lidar"
           + ("   (ARMED FROM THE START)" if args.goal_anywhere else
              "   (armed once the route is spent)"))
+    if args.no_audio:
+        print("audio     disabled")
+    else:
+        print(f"audio     {args.drive_audio} while driving")
+        print(f"          {args.goal_audio} at the goal, volume "
+              f"{args.audio_volume:.2f}, target "
+              f"{args.audio_target or 'default sink'}")
     if args.goal_anywhere:
         print("warning:  --goal-anywhere: any confirmed magenta may stop the "
               "car, including one\n"
@@ -453,6 +480,13 @@ def main(argv=None):
     last_goal_state = goal_latch.state
     was_armed = False
     loops = 0
+    audio = audio_playback.AudioController(
+        drive_audio=args.drive_audio,
+        goal_audio=args.goal_audio,
+        volume=args.audio_volume,
+        target=args.audio_target,
+        enabled=not args.no_audio,
+    )
 
     try:
         while True:
@@ -470,6 +504,8 @@ def main(argv=None):
             if armed and not was_armed and goal_latch.stopped:
                 goal_latch.release()
                 print("  [goal released] X re-pressed -- driving again")
+            audio_playback.update_for_deadman(
+                audio, armed, was_armed, goal_stopped=goal_latch.stopped)
             was_armed = armed
 
             scan = reader.take()
@@ -601,7 +637,11 @@ def main(argv=None):
 
             # The arrival is the one event this whole tool exists to produce,
             # so it prints when it happens rather than waiting up to a second.
-            if goal_latch.state != last_goal_state:
+            goal_state_changed = goal_latch.state != last_goal_state
+            audio_playback.update_for_goal(
+                audio, goal_stopped=goal_latch.stopped,
+                state_changed=goal_state_changed)
+            if goal_state_changed:
                 print(f"  [goal {last_goal_state} -> {goal_latch.state}] "
                       f"{status['goal_range_m']:.2f} m"
                       + (f", carried {goal_latch.blind_ticks} ticks"
@@ -668,6 +708,7 @@ def main(argv=None):
     finally:
         if vesc is not None:
             vesc.close()
+        audio.close()
         reader.stop()
         detector_thread.stop()
         reader.join(timeout=1.0)

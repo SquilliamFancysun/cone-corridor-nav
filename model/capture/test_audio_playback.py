@@ -11,7 +11,15 @@ import unittest
 CAPTURE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(CAPTURE_DIR))
 
-from audio_playback import AudioController, CLOSED, DRIVING, GOAL, STOPPED
+from audio_playback import (
+    AudioController,
+    CLOSED,
+    DRIVING,
+    GOAL,
+    STOPPED,
+    update_for_deadman,
+    update_for_goal,
+)
 
 
 class FakeProcess:
@@ -47,6 +55,20 @@ class FakePopen:
         self.calls.append((argv, kwargs))
         self.processes.append(process)
         return process
+
+
+class RecordingAudio:
+    def __init__(self):
+        self.events = []
+
+    def start_driving(self):
+        self.events.append(DRIVING)
+
+    def goal_reached(self):
+        self.events.append(GOAL)
+
+    def stop(self):
+        self.events.append(STOPPED)
 
 
 def wait_for(predicate, timeout=1.0):
@@ -171,6 +193,30 @@ class AudioControllerTest(unittest.TestCase):
                 volume=1.1,
                 popen_factory=self.popen,
             )
+
+
+class DriveEventIntegrationTest(unittest.TestCase):
+    def setUp(self):
+        self.audio = RecordingAudio()
+
+    def test_deadman_rising_edge_starts_driving_track(self):
+        update_for_deadman(self.audio, armed=True, was_armed=False)
+        self.assertEqual(self.audio.events, [DRIVING])
+
+    def test_deadman_falling_edge_stops_driving_track(self):
+        update_for_deadman(self.audio, armed=False, was_armed=True)
+        self.assertEqual(self.audio.events, [STOPPED])
+
+    def test_release_after_goal_does_not_cut_off_finish_clip(self):
+        update_for_deadman(
+            self.audio, armed=False, was_armed=True, goal_stopped=True)
+        self.assertEqual(self.audio.events, [])
+
+    def test_only_transition_into_stopped_plays_finish_clip(self):
+        update_for_goal(self.audio, goal_stopped=True, state_changed=True)
+        update_for_goal(self.audio, goal_stopped=True, state_changed=False)
+        update_for_goal(self.audio, goal_stopped=False, state_changed=True)
+        self.assertEqual(self.audio.events, [GOAL])
 
 
 if __name__ == "__main__":
