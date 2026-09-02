@@ -260,7 +260,7 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
         # cone_nav/topology/dead_end.py.
         dead_end_latch.update(
             corridor_line, cones, oranges=split(cones).dead_ends,
-            armed=not engaged and not run_in, origin=axle)
+            armed=not engaged and not run_in, origin=axle, travel_m=travel_m)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
             junction, dropped, survey, remembered, goal_survey)
 

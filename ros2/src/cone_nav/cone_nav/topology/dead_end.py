@@ -79,6 +79,22 @@ MIN_CONES = 4
 WALL_RANGE_M = 2.5
 WALL_OFFSET_M = 1.2
 
+# How far the car must travel after a release before this may latch again.
+#
+# Releasing the latch does not move the car, and a stopped car's scan does not
+# change -- which is the same property that lets the machine be slow and
+# careful, working against it here. Measured 2026-09-02 (`explore-2.jsonl`):
+# X was re-pressed at the wall, the unchanged scan re-confirmed twelve ticks
+# later, and the run recorded THREE dead ends for two real walls, each one
+# also spending a `cursor.dead_end()` the search had not earned.
+#
+# A travel floor rather than a tick timer, because what makes the next latch
+# trustworthy is new evidence, not elapsed time. 0.5 m is enough to leave a
+# wall the car stopped ~0.8 m from. An operator-assisted lift reads as zero
+# travel -- `rigid_step` cannot see a carry -- so a car put back at the
+# junction stays suppressed until it drives away, which is exactly right.
+REARM_TRAVEL_M = 0.5
+
 
 class DeadEndLatch(object):
     """Has the corridor ended? Latched, and released only by the deadman.
@@ -90,11 +106,14 @@ class DeadEndLatch(object):
 
     __slots__ = ("state", "reason", "confirm", "oranges_seen", "reach_m",
                  "min_reach_m", "min_cones", "confirm_ticks",
-                 "lone_confirm_ticks")
+                 "lone_confirm_ticks", "rearm_travel_m", "_travel_since")
 
     def __init__(self, min_reach_m=MIN_REACH_M, min_cones=MIN_CONES,
                  confirm_ticks=CONFIRM_TICKS,
-                 lone_confirm_ticks=LONE_CONFIRM_TICKS):
+                 lone_confirm_ticks=LONE_CONFIRM_TICKS,
+                 rearm_travel_m=REARM_TRAVEL_M):
+        self.rearm_travel_m = rearm_travel_m
+        self._travel_since = rearm_travel_m
         self.min_reach_m = min_reach_m
         self.min_cones = min_cones
         self.confirm_ticks = confirm_ticks
@@ -110,21 +129,36 @@ class DeadEndLatch(object):
         return self.state == DEAD_END
 
     def release(self):
-        """Clear the latch. The deadman's rising edge, same as `GoalLatch`."""
+        """Clear the latch. The deadman's rising edge, same as `GoalLatch`.
+
+        Also starts the re-arm travel floor: the car is still at the wall it
+        just named, so without one the next twelve ticks name it again.
+        """
         self.state = CLEAR
         self.reason = ""
         self.confirm = 0
         self.oranges_seen = 0
+        self._travel_since = 0.0
 
-    def update(self, line, cones, oranges=(), armed=True, origin=(0.0, 0.0)):
+    def update(self, line, cones, oranges=(), armed=True, origin=(0.0, 0.0),
+               travel_m=0.0):
         """One tick.
 
         `armed` is the caller holding the machine down where the corridor is
         allowed to end -- through a junction mouth and over the goal run-in.
         See the module docstring. `oranges` is `boundary_split.split().dead_ends`,
-        already range-sorted; it is corroboration only.
+        already range-sorted; it is corroboration only. `travel_m` is this
+        tick's measured travel, which only the re-arm floor reads.
         """
         if self.latched:
+            return self.state
+
+        self._travel_since += abs(travel_m)
+        if self._travel_since < self.rearm_travel_m:
+            self.confirm = 0
+            self.oranges_seen = 0
+            self.reason = (f"re-arming in "
+                           f"{self.rearm_travel_m - self._travel_since:.2f} m")
             return self.state
 
         if not armed:

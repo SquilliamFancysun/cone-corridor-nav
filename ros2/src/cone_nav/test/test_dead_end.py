@@ -153,3 +153,56 @@ def test_reach_is_reported_for_the_log():
     latch = DeadEndLatch()
     latch.update(FakeLine(0.42), cones())
     assert latch.reach_m == pytest.approx(0.42)
+
+
+# --- re-arming after a release ------------------------------------------
+
+def test_it_does_not_name_the_same_wall_twice_without_moving():
+    """Measured on the car 2026-09-02: X was re-pressed at the wall, the
+    unchanged scan re-confirmed, and the run recorded three dead ends for two
+    real walls -- spending a cursor.dead_end() the search had not earned."""
+    latch = DeadEndLatch()
+    run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)])
+    assert latch.latched
+    latch.release()
+    assert run(latch, 60, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)]) == CLEAR
+    assert "re-arming in" in latch.reason
+
+
+def test_a_lift_reads_as_no_travel_so_it_stays_suppressed():
+    """rigid_step cannot see a carry, so an operator-assisted recovery gives
+    zero travel -- and a car put back at the junction must not immediately
+    re-name the wall it was carried away from."""
+    latch = DeadEndLatch()
+    run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)])
+    latch.release()
+    for _ in range(60):
+        latch.update(FakeLine(0.4), cones(), oranges=[FakeCone(1.0, 0.0)],
+                     travel_m=0.0)
+    assert not latch.latched
+
+
+def test_driving_away_re_arms_it():
+    latch = DeadEndLatch()
+    run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)])
+    latch.release()
+    for _ in range(20):        # 20 x 0.03 m = 0.6 m, past the 0.5 m floor
+        latch.update(FakeLine(2.5), cones(), travel_m=0.03)
+    assert run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
+
+
+def test_reversing_away_counts_as_travel_too():
+    """The floor is about new evidence, not direction -- and Phase 2 backs
+    the car out of the wall it just named."""
+    latch = DeadEndLatch()
+    run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)])
+    latch.release()
+    for _ in range(20):
+        latch.update(FakeLine(2.5), cones(), travel_m=-0.03)
+    assert run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
+
+
+def test_the_first_wall_of_a_run_needs_no_travel_first():
+    """A car that starts facing a wall must still name it."""
+    latch = DeadEndLatch()
+    assert run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
