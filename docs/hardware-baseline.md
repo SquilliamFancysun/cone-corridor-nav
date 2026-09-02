@@ -262,6 +262,52 @@ our own code**, in `cone_perception/lidar_cluster.py`, against the measured arc
 above. _Tell:_ re-run `--calibrate` after any remount; the arc is reported every
 time and lands in `calibration.json`.
 
+## Drive-by-wire: the flags this car needs on every powered run
+
+Three settings are properties of **this vehicle**, not preferences. A run
+without them is not a slower run, it is a different one, and two of the three
+have already cost a track session each.
+
+```sh
+--invert-steering  --max-range 3.5  --lookahead 0.8
+```
+
+| Flag | Why this car |
+|---|---|
+| `--invert-steering` | **The servo is mirrored.** Verified 2026-09-01, and re-confirmed from telemetry 2026-09-02 |
+| `--max-range 3.5` | The flattened camera pitch admits world-clutter past ~2.5 m. Clipping the cluster range is what keeps it out |
+| `--lookahead 0.8` | At the shipped 1.0 the car clipped the centre red cone of a junction. Reproduced in sim at the measured speed and fixed by shortening the lookahead — **not** by reducing `--smooth-window`, which twitches into the dead end |
+
+### How the mirrored servo was proved, so it can be re-checked
+
+`--steer-only` on a stand is the right first test and remains the procedure
+(`docs/junction-bringup.md` stage 4). But a driven log proves it without a stand,
+because scan-matched odometry is an independent witness to what the car did:
+
+```
+   t   steer  servo  yaw/tick      servo >0.5 = commanded LEFT
+ 8.3  +23.26  0.988    -2.47       yaw   <0   = actually turned RIGHT
+65.0  +25.48  0.813    -3.63
+```
+
+At near-full **left** lock the car turned **right**, faster the harder it was
+asked. Measured mean yaw over the driven ticks was −0.98 deg/tick, −167 deg
+across the run (`data/trials/explore-1.jsonl`, 2026-09-02).
+
+That the odometry is a *different* signal from the steering is the whole
+argument. A wrong lidar `mirror` flag would flip the perceived cones **and** the
+measured yaw together, leaving the two consistent with each other; here they
+disagree, so perception and odometry are self-consistent and the actuator is the
+odd one out.
+
+It is a **flag, not a default**, deliberately: `drive_corridor.VescDriver` states
+that the sign is unknown until tested, and baking it in would mean the next car —
+or this one after a servo is re-seated — silently inherits a decision nobody
+made. Which is live: the goal run on 2026-09-01 drove correctly, and `js0` and
+`/dev/serial/by-id` both re-timestamp to Sep 1 21:59, so something was re-cabled
+around then. **If the servo lead was reversed, fix the wiring rather than
+carrying the flag forever.**
+
 ## Software on the car
 
 | Component | Location | Notes |

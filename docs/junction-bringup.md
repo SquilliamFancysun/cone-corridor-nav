@@ -330,11 +330,19 @@ the plan and the emitted route are identical to what a self-reversing car
 produces.
 
 ```sh
-python drive_junction.py --weights ~/models/best.pt --explore \
-    --emit-route routes/optimal.txt --log explore-1.jsonl
+~/env/bin/python drive_junction.py --weights ~/models/best.pt --explore \
+    --invert-steering --max-range 3.5 --lookahead 0.8 \
+    --max-duty 0.05 --emit-route routes/optimal.txt --log explore-1.jsonl
 ```
 
 `--route` and `--explore` are mutually exclusive and neither is a default.
+
+**`--invert-steering --max-range 3.5 --lookahead 0.8` are not optional on this
+car** — see *Drive-by-wire* in `hardware-baseline.md`. Omit the first and the car
+turns the wrong way at every bend while tracking a straight corridor perfectly;
+a run on 2026-09-02 accumulated −167 deg of unwanted right turn that way. Use
+`~/env/bin/python`, not `python`: `/usr/bin/python` has no depthai or torch, and
+`--help` succeeds either way.
 
 **Deploy first.** All of this is new code, and the car gets it by rsync rather
 than by clone, so stage 2's `./model/capture/deploy.sh` is not optional here. The
