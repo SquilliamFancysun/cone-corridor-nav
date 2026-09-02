@@ -76,9 +76,19 @@ fi
 # A deploy between a run and reading its log destroyed 22 s of stage-3 data that
 # only existed on the car. Excluded now -- run data is the one thing on the car
 # that cannot be regenerated from the repo.
+#
+# routes/ is on that list for the same reason and it is not obvious why: the
+# directory does not exist in this source tree at all -- it is filled from
+# data/routes/ by the second rsync below -- so --delete would remove it whole
+# and then recreate it. Anything the CAR wrote there dies in between, and
+# `drive_junction.py --emit-route` writes exactly there: the route the car
+# worked out by exploring, which is run data and cannot be regenerated from the
+# repo either. The second rsync carries no --delete, so excluding it here loses
+# nothing.
 rsync -av --delete \
   --exclude='__pycache__' \
   --exclude='*.jsonl' \
+  --exclude='routes' \
   --exclude='*.mcap' \
   --exclude='sessions' \
   --exclude='.pytest_cache' \

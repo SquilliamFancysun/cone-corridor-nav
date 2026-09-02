@@ -319,10 +319,138 @@ overshoots, raise it; do not lower it below 0.20 m, where
 `clustering.MIN_CONE_RANGE_M` discards the trophy's return as a chassis leak and
 the car would be stopping on a goal it can no longer see.
 
+## Stage 7 — exploring, with you as the reverse
+
+Everything above drives a route someone wrote. `--explore` takes the route away:
+the car picks a branch at each junction, and when the branch ends in a wall it
+backs the search out and takes the other one. It cannot back the CAR out yet —
+there is no reverse in the tool — so you are the reverse. That is not a
+workaround bolted on; the decision layer is finished either way, and the map,
+the plan and the emitted route are identical to what a self-reversing car
+produces.
+
+```sh
+python drive_junction.py --weights ~/models/best.pt --explore \
+    --emit-route routes/optimal.txt --log explore-1.jsonl
+```
+
+`--route` and `--explore` are mutually exclusive and neither is a default.
+
+### What is different, and what it costs
+
+**The goal is armed from the first tick.** On a route the goal lies past the last
+junction by construction, so a magenta seen with turns outstanding is a misread.
+A maze puts the goal wherever it likes, so that rule cannot apply — and magenta
+read as red is **15% of instances on v3**, the detector's hardest pair. A misread
+mid-course ends the run. The tool says so loudly at startup.
+
+_For the first runs, keep the trophy off the course until the last corridor._
+Prove the search works before asking it to survive the goal detector.
+
+**`route_remaining` means something else.** Not entries left to read but branches
+**found and not yet tried**, so it GROWS as the car discovers the maze. The log
+records which cursor drove the run and `junction_report.py` reads it; a report
+that graded an exploring run against a route length would call every backtrack a
+fault.
+
+### 7a — can the car see the wall?
+
+**The stage-3 pattern, and for the same reason: no motion needed.** Carry or push
+the car down the walled stub.
+
+```sh
+python drive_junction.py --weights ~/models/best.pt --explore \
+    --dry-run --no-deadman --log explore-see.jsonl
+
+~/env/bin/python junction_report.py explore-see.jsonl
+```
+
+The dead-end signal is **geometric first**: the corridor's reach collapsing while
+cones are still in view. Orange only shortens the confirmation from twelve ticks
+to five, because orange has **recall 0.687** on v3 and **15% of oranges are called
+red** — a wall read as a gate is the worst confusion on this track, so it cannot
+be the signal.
+
+Read `dead_end_reason` before anything else. The report ranks it over the ticks
+that did *not* latch, which is the whole diagnosis:
+
+| `dead_end_reason` | What it means | Where to look |
+|---|---|---|
+| `corridor reaches X m` | The corridor was genuinely open. Not a fault if the car had not arrived yet | Push further in |
+| `only N cones in view` | A blind car, not a wall — the line collapsed because perception did | The camera, the lidar, the light |
+| `single-boundary fallback` | The car is confused about one wall | Cone spacing; one side is dropping out |
+| `not armed` | Held down deliberately — inside a junction mouth or the goal run-in | Correct; the mouth is allowed to look like a dead end |
+| `confirming N/M` | It is working. M is 5 with an orange seen, 12 without | Nothing |
+
+This run also writes the **first log with `pose_x` in it**, which is what
+`analysis/map_from_log.py` needs. Nothing on disk before today can be mapped.
+
+### 7b — driven, with recovery
+
+```sh
+python drive_junction.py --weights ~/models/best.pt --explore \
+    --max-duty 0.05 --emit-route routes/optimal.txt --log explore-1.jsonl
+```
+
+At each wall the car prints `[DEAD END]` and stops. Then:
+
+1. **release X.**
+2. carry the car back to the junction it came through, facing the way it
+   originally approached — about 2.4 m short of the red line, the same place
+   stage 3 has you stand.
+3. **press X.** The console names the branch it is about to take. It has already
+   chosen; the release does not decide anything.
+
+Expect `pose frame broken by the lift` on that line. It means what it says: the
+pose cannot see a carry, so edges measured across one are recorded **unmeasured**
+rather than wrong. `maze_*` in the log counts them.
+
+### 7c — the plan, and driving it
+
+On exit the tool writes the route from the start to the goal implied by what it
+explored — the driven path with its dead ends removed — and prints how many gates
+it drove against how many the route holds.
+
+That file is run data: the car worked it out, and nothing in the repo can
+regenerate it. `deploy.sh` excludes `routes/` from its `--delete` for exactly
+that reason — but **pull it off the car before you redeploy anyway**, along with
+the logs. Then carry the car to the start:
+
+```sh
+python drive_junction.py --weights ~/models/best.pt \
+    --route routes/optimal.txt --log optimal-1.jsonl
+```
+
+No new driving code is involved; this is the same tool reading the same route
+format a human would have written. **That run is also the one to build the map
+from** — a clean single pass with no lifts in it:
+
+```sh
+python analysis/map_from_log.py optimal-1.jsonl --layout data/layouts/track_v1.csv
+```
+
+### When it goes wrong
+
+| Symptom | Field to read | Likely cause |
+|---|---|---|
+| Drives into the wall and never stops | `dead_end_reason` | See the table in 7a. It is a detector or layout fault, not a decision fault |
+| Stops in a clear corridor | `dead_end_reason`, `cones` | A perception dropout read as a wall. `only N cones in view` should have caught it — check the count |
+| Takes the same branch twice | `explore_path`, `route_remaining` | The latch fired twice on one wall, or X was pressed without the car being moved |
+| Stops mid-course at nothing | `goal_state`, `magenta_in_view` | A red misread as magenta. Take the trophy off the course |
+| Route emitted with a phantom turn | `maze_nodes` vs junctions driven | A junction recorded twice — the backtrack re-entry was not matched to the same node |
+| `no route written` | `goal_state` | The run ended without finding the goal, so there was nothing to plan |
+
 ## What to bring back
 
 - `junction-see.jsonl` per direction, and `junction-run-N.jsonl` per driven run,
   into `data/trials/`
+- `explore-see.jsonl` and `explore-N.jsonl`, plus the `optimal.txt` the run
+  emitted and the `optimal-N.jsonl` from driving it
+- the map residual from `map_from_log.py --layout` on that last run — the number
+  that says whether odometry can carry an edge length on the real car (the sim
+  gives 0.009 m mean; anything under ~0.10 m is fine)
+- how many `dead_end_reason` ticks it took to latch each wall, and whether orange
+  was seen at all
 - the measured gate gaps, from `gate_gaps_m` rather than the tape
 - the photograph of the built junction
 - whether `--invert-steering` was needed
