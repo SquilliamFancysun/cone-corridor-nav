@@ -34,8 +34,10 @@ import sys
 
 from cone_nav.control import pure_pursuit, speed_ctrl
 from cone_nav.guidance import goal_stop, junction_exec
+from cone_nav.corridor.boundary_split import split
+from cone_nav.guidance.explore import ExplorePolicy
 from cone_nav.guidance.route_exec import RouteCursor, load_route
-from cone_nav.topology import gate_detect, goal_detect, topo_state
+from cone_nav.topology import dead_end, gate_detect, goal_detect, topo_state
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
@@ -382,12 +384,18 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
              latency_ticks=DEFAULT_LATENCY_TICKS, servo_tau_s=SERVO_TAU_S,
              fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW,
              route=None, goal_stop_m=goal_stop.STOP_RANGE_M,
-             goal_anywhere=False):
+             goal_anywhere=False, cursor=None):
     """Drive the layout. Returns a SimResult; never raises on a bad run.
 
     `route` is a list of turns; passing one turns on junction handling with the
     same `TopoState` and `RouteCursor` `drive_junction.py` uses, so a gain tuned
     here is tuned against the code the car runs.
+
+    `cursor` supplies that decision-maker directly instead, so an
+    `ExplorePolicy` can be driven against the same vehicle model -- which is
+    where the exploration policy gets tested, since a maze it has not seen is
+    exactly what a synthetic layout is. Passing one turns junction handling on
+    the same way a route does.
 
     The goal latch is always running, armed on the same condition the car uses:
     no turn still outstanding. `goal_anywhere` forces it on even while the route
@@ -397,9 +405,12 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
     intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
 
-    topo = topo_state.TopoState(RouteCursor(route)) if route else None
-    red_memory = label_memory.RedMemory() if route else None
+    if cursor is None and route:
+        cursor = RouteCursor(route)
+    topo = topo_state.TopoState(cursor) if cursor is not None else None
+    red_memory = label_memory.RedMemory() if cursor is not None else None
     goal_latch = goal_stop.GoalLatch(stop_range_m=goal_stop_m)
+    dead_end_latch = dead_end.DeadEndLatch()
     previous_line = None
     last_travel = 0.0
     last_yaw = 0.0
@@ -432,7 +443,7 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # Armed exactly as `drive_junction.py` arms it: the goal lies at the
         # end of the route by construction, so a magenta seen while a turn is
         # still outstanding is a misread and must not stop the car.
-        goal_armed = goal_anywhere or topo is None or topo.cursor.exhausted
+        goal_armed = goal_anywhere or topo is None or topo.cursor.goal_armed
         result, cones, line, filled, corridor_line, dropped, goal_survey = pipeline(
             scan, detections, intr, detection_age_s, fill_sides=fill_sides,
             reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov,
@@ -514,6 +525,25 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # A car commanding zero for two seconds is not going to start again on
         # its own: the centerline it is refusing to drive on is computed from a
         # scan taken where it is standing.
+        # The dead-end latch, on the same inputs and the same holds as the
+        # car's. Run before the stall check so a wall is reported as a wall
+        # rather than as the generic zero-duty stop it also is -- which is the
+        # entire difference this module exists to make.
+        dead_end_latch.update(
+            corridor_line, cones, oranges=split(cones).dead_ends,
+            armed=not (topo is not None and topo.engaged)
+            and not goal_latch.run_in,
+            origin=rear_axle_in_base)
+        if dead_end_latch.latched:
+            if topo is not None:
+                resume = topo.cursor.dead_end()
+                outcome = (f"dead end: {dead_end_latch.reason}"
+                           + (f"; would take {resume}" if resume else
+                              "; nothing left to explore"))
+            else:
+                outcome = f"dead end: {dead_end_latch.reason}"
+            break
+
         stalled = stalled + 1 if duty_now <= 0.0 else 0
         if stalled >= stall_ticks:
             outcome = f"stopped: {target.reason or 'zero duty'}"
@@ -588,11 +618,21 @@ def build_track(name, spacing=DEFAULT_SPACING_M):
         return cone_field.track_junction("left", spacing=spacing)
     if name == "junction-right":
         return cone_field.track_junction("right", spacing=spacing)
+    if name == "junction-left-blocked":
+        # The mirror of junction-left: the branch the car is sent down is the
+        # walled stub. `track_junction` walls whichever branch is NOT the
+        # argument, so asking for the opposite one produces a layout where a
+        # car doing everything correctly still arrives at a wall -- which is
+        # the only way to test `dead_end` on a car that is not already lost.
+        return cone_field.track_junction("right", spacing=spacing)
+    if name == "junction-right-blocked":
+        return cone_field.track_junction("left", spacing=spacing)
     raise SystemExit(f"unknown track {name!r}")
 
 
 TRACKS = ("straight", "curve", "curve-right", "s-bend", "track_v1",
-          "junction-left", "junction-right")
+          "junction-left", "junction-right",
+          "junction-left-blocked", "junction-right-blocked")
 
 
 # --- reporting ----------------------------------------------------------
@@ -696,6 +736,15 @@ def main(argv=None):
                         help="metres from base_link at which the magenta goal "
                              "stops the run. Sweep it here before committing a "
                              "value to the car")
+    parser.add_argument("--explore", action="store_true",
+                        help="decide each junction on the spot instead of "
+                             "reading a route, and report the dead end when "
+                             "a branch turns out to be a wall. Use with a "
+                             "*-blocked track to exercise the search")
+    parser.add_argument("--explore-first", default="left",
+                        choices=["left", "right"],
+                        help="which branch --explore tries first (default: "
+                             "left)")
     parser.add_argument("--goal-anywhere", action="store_true",
                         help="arm the goal even while the route has turns left")
     parser.add_argument("--no-plot", action="store_true")
@@ -704,11 +753,17 @@ def main(argv=None):
     layout = build_track(args.track, args.spacing)
     dropout = tuple(c.strip() for c in args.dropout.split(",") if c.strip())
     axle = (args.rear_axle_x, 0.0, 0.0)
+    if args.route and args.explore:
+        raise SystemExit("error: pass one of --route and --explore, not both. "
+                         "A route says which way\n       to turn; --explore "
+                         "decides on the spot.")
     route = load_route(args.route) if args.route else None
-    if args.track.startswith("junction-") and route is None:
-        raise SystemExit("error: a junction track needs --route. Without one "
-                         "the car has no way to choose a branch.\n"
-                         "       try --route data/routes/route_v1.txt")
+    if args.track.startswith("junction-") and route is None and not args.explore:
+        raise SystemExit("error: a junction track needs --route or --explore. "
+                         "Without one the car\n       has no way to choose a "
+                         "branch.\n"
+                         "       try --route data/routes/route_v1.txt, "
+                         "or --explore")
 
     if args.sweep_lookahead:
         print(f"{'lookahead':>10}  {'outcome':<28} {'dist':>6}  "
@@ -720,6 +775,8 @@ def main(argv=None):
                            fill_sides=not args.no_camera_fill,
                            latency_ticks=args.latency_ticks,
                            servo_tau_s=args.servo_tau, route=route,
+                           cursor=(ExplorePolicy(first=args.explore_first)
+                                   if args.explore else None),
                            goal_stop_m=args.goal_stop,
                            goal_anywhere=args.goal_anywhere)
             print(f"{lookahead:>10.1f}  {res.outcome:<28} "
@@ -735,6 +792,8 @@ def main(argv=None):
                       fill_sides=not args.no_camera_fill,
                       latency_ticks=args.latency_ticks,
                       servo_tau_s=args.servo_tau, route=route,
+                      cursor=(ExplorePolicy(first=args.explore_first)
+                              if args.explore else None),
                       goal_stop_m=args.goal_stop,
                       goal_anywhere=args.goal_anywhere)
     print(f"track {args.track}, {len(layout)} cones, "
