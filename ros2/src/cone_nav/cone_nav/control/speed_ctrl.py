@@ -166,14 +166,51 @@ def duty(pursuit, line, max_duty=DEFAULT_MAX_DUTY, origin=(0.0, 0.0),
     return DutyResult(min(commanded, max_duty), "", reach)
 
 
+# Reverse runs at the cogging floor and no faster. It is the direction with no
+# lidar behind it (the chassis blocks 142 deg aft, measured), so the car is
+# driving over ground it has to REMEMBER is clear rather than see is clear --
+# and `reverse_ctrl`'s loop stiffens with speed on gains nothing has measured.
+MAX_REVERSE_DUTY = MIN_MOVE_DUTY
+
+
+def reverse_duty(max_reverse_duty=MAX_REVERSE_DUTY):
+    """The duty to command while backing up. Negative.
+
+    A separate function rather than a sign threaded through `duty()`, because
+    every refusal `duty()` makes is about a corridor AHEAD -- reach, steerable
+    target, point count -- and none of them describes a car reversing down a
+    corridor it can no longer see. Reusing it would mean standing all three
+    down, which is `goal_stop`'s trick and needs `goal_stop`'s argument; there
+    is no such argument here.
+
+    There is no derating either. Reverse already runs at the floor, and the
+    floor is where derating stops meaning anything: below it the motor cogs
+    rather than turns.
+    """
+    return -abs(max_reverse_duty)
+
+
 def ramp(previous, target, max_step=MAX_DUTY_STEP):
     """Rate-limit a duty change. Pure -- the caller holds `previous`.
 
-    Only the rise is limited. A commanded stop takes effect immediately,
-    because every path that produces one is either a safety condition or a
-    perception dropout, and neither is improved by easing into it.
+    Only the rise is limited, in whichever direction is being commanded. A
+    commanded stop takes effect immediately, because every path that produces
+    one is either a safety condition or a perception dropout, and neither is
+    improved by easing into it.
+
+    Zero is the pivot rather than a value to ramp through: a car asked to
+    reverse while still rolling forward must reach zero at once and start
+    again, not slide across through a duty that means nothing. That also keeps
+    the old contract exactly -- `target <= 0` used to mean stop, and for every
+    caller that never commands a negative it still does.
     """
-    if target <= 0.0:
+    if target == 0.0:
+        return 0.0
+    if target < 0.0:
+        if previous > 0.0:
+            return 0.0
+        return max(target, previous - max_step)
+    if previous < 0.0:
         return 0.0
     if target > previous + max_step:
         return previous + max_step

@@ -261,7 +261,15 @@ class VescDriver:
         # DonkeyCar's -1..1 throttle, so max_duty_percent is a ceiling rather
         # than a scale factor. Applying it as a scale would silently run the
         # car at a fifth of the commanded speed.
-        self.vesc.set_duty_cycle(min(duty, self.max_duty_percent))
+        #
+        # The clamp is SYMMETRIC because duty may now be negative: pyvesc takes
+        # a negative duty and the VESC reverses on it. A one-sided
+        # `min(duty, ceiling)` passes every negative value through untouched,
+        # so the ceiling that bounds the car going forwards would not bound it
+        # at all going backwards -- and reverse is the direction with no lidar
+        # behind it. See cone_nav/control/reverse_ctrl.py.
+        self.vesc.set_duty_cycle(
+            max(-self.max_duty_percent, min(duty, self.max_duty_percent)))
         return servo
 
     def stop(self):

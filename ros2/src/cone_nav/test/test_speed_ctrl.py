@@ -12,11 +12,13 @@ from cone_nav.control.pure_pursuit import steering_angle
 from cone_nav.control.speed_ctrl import (
     DEFAULT_MAX_DUTY,
     FULL_REACH_M,
+    MAX_DUTY_STEP,
     MIN_MOVE_DUTY,
     MIN_REACH_M,
     duty,
     ramp,
     reach_of,
+    reverse_duty,
 )
 
 WHEELBASE = 0.25
@@ -233,3 +235,40 @@ def test_a_full_ramp_reaches_the_cap_in_a_sane_number_of_ticks():
         ticks += 1
     assert value == pytest.approx(DEFAULT_MAX_DUTY)
     assert ticks <= 10
+
+
+# --- reverse ------------------------------------------------------------
+
+def test_reverse_duty_is_negative_and_at_the_floor():
+    """Reverse is the direction with no lidar behind it, so it runs at the
+    cogging floor and no faster."""
+    assert reverse_duty() == -MIN_MOVE_DUTY
+
+
+def test_reverse_duty_magnitude_is_capped_however_it_is_passed():
+    assert reverse_duty(0.08) == -0.08
+    assert reverse_duty(-0.08) == -0.08
+
+
+def test_the_ramp_eases_into_reverse_the_same_way_it_eases_forward():
+    assert ramp(0.0, -0.05) == pytest.approx(-MAX_DUTY_STEP)
+
+
+def test_the_ramp_will_not_cross_zero_in_one_direction_or_the_other():
+    """A car asked to reverse while still rolling forward reaches zero at once
+    and starts again. Sliding across would command a duty that means nothing
+    in either direction."""
+    assert ramp(0.08, -0.05) == 0.0
+    assert ramp(-0.05, 0.08) == 0.0
+
+
+def test_a_commanded_stop_is_still_immediate_from_reverse():
+    assert ramp(-0.05, 0.0) == 0.0
+
+
+def test_the_old_forward_contract_is_unchanged():
+    """Every caller that never commands a negative must see exactly what it
+    saw before."""
+    assert ramp(0.0, 0.10) == pytest.approx(MAX_DUTY_STEP)
+    assert ramp(0.06, 0.06) == pytest.approx(0.06)
+    assert ramp(0.06, 0.0) == 0.0
