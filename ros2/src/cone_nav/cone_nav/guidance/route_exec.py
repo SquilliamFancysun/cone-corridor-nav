@@ -100,6 +100,12 @@ class RouteCursor(object):
     def remaining(self):
         return max(0, len(self.turns) - self.index)
 
+    # What decided the turns, for the log. `junction_report.py` cannot tell a
+    # route run from an exploring one otherwise: both write the same schema,
+    # and `route_index` / `route_remaining` mean different things in each
+    # without looking different. Recorded rather than inferred.
+    label = "route"
+
     @property
     def path(self):
         """The turns consumed so far -- how the car got where it is.

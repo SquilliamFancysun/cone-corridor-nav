@@ -151,19 +151,65 @@ def gaps_of(rows, field="gate_gaps_m"):
     return out
 
 
+def cursor_of(rows):
+    """Which decided the turns: "route", "explore", or "" for an older log.
+
+    Recorded by drive_junction rather than inferred, because both write the
+    same schema and the fields below mean different things in each.
+    """
+    for row in rows:
+        if row.get("cursor"):
+            return row["cursor"]
+    return ""
+
+
 def route_length(rows):
-    """How many junctions the route held, from the log itself.
+    """How many junctions the ROUTE held, from the log itself, or None.
 
     `route_index` counts the entries consumed and `route_remaining` the ones
     still to come, so their sum is the route's length on every tick. Reading
     it beats assuming one: the same log format serves a single-junction
     bring-up and a two-junction demo, and a report that hardcodes 1 calls the
     second junction a fault.
+
+    None on an exploring run, and that is not a missing value -- there is no
+    route to have a length. `remaining` there counts branches FOUND and not
+    yet tried, so the sum is 0 on tick one and grows as the car discovers the
+    maze; read as a route length it says the run asked for no junctions and
+    turns every manoeuvre into a fault.
     """
+    if cursor_of(rows) == "explore":
+        return None
     for row in rows:
         if "route_index" in row and "route_remaining" in row:
             return row["route_index"] + row["route_remaining"]
     return 1
+
+
+def dead_ends(rows):
+    """(tick, reason) for each time the latch went from clear to dead end."""
+    out = []
+    previous = ""
+    for row in rows:
+        state = row.get("dead_end_state", "")
+        if state == "dead_end" and previous != "dead_end":
+            out.append((row.get("t", 0.0), row.get("dead_end_reason", ""),
+                        row.get("explore_path", "")))
+        previous = state
+    return out
+
+
+def ranked_reasons(rows, field, skip_when=None):
+    """Ranked histogram of a reason field. Ranking beats reporting whichever
+    happened to be last: the cause that held for 200 ticks is the fault."""
+    counts = {}
+    for row in rows:
+        if skip_when is not None and skip_when(row):
+            continue
+        value = row.get(field) or ""
+        if value:
+            counts[value] = counts.get(value, 0) + 1
+    return sorted(counts.items(), key=lambda kv: -kv[1])
 
 
 def route_turns(rows):
@@ -282,11 +328,23 @@ def report(rows, path, expect_gap=EXPECT_GAP_M):
     # route must not read as a failure for entering the manoeuvre twice.
     expected = route_length(rows)
     turns = " then ".join(r for r in route_turns(rows)) or "-"
-    print(f"    ..... route asked for {expected} junction(s): {turns}")
-    print(f"    {mark(traverses == expected)} entered the manoeuvre "
-          f"{traverses} time(s)        expect {expected}")
-    print(f"    {mark(len(passes) == expected)} confirmed passes    "
-          f"{len(passes)}                  expect {expected}")
+    if expected is None:
+        # Nothing to expect: the car was discovering the maze, so entering the
+        # manoeuvre more often than a route would have is the point rather
+        # than a fault. Every branch driven twice is one backed out of.
+        last = rows[-1]
+        print(f"    ..... exploring, no route. Turns driven: {turns}")
+        print(f"    ..... entered the manoeuvre {traverses} time(s), "
+              f"{len(passes)} confirmed pass(es)")
+        print(f"    ..... ended at "
+              f"{last.get('explore_path') or 'the start'}, "
+              f"{last.get('route_remaining', 0)} branch(es) found and not tried")
+    else:
+        print(f"    ..... route asked for {expected} junction(s): {turns}")
+        print(f"    {mark(traverses == expected)} entered the manoeuvre "
+              f"{traverses} time(s)        expect {expected}")
+        print(f"    {mark(len(passes) == expected)} confirmed passes    "
+              f"{len(passes)}                  expect {expected}")
     if timeouts:
         print("    CHECK traverse TIMED OUT -- the corridor never came back on")
         print("          the far side, or DUTY_TO_MPS is badly off for this car")
@@ -305,15 +363,61 @@ def report(rows, path, expect_gap=EXPECT_GAP_M):
         print(f"    ..... single-boundary ticks {fallback:>3} of {len(traverse)}"
               "          sim gets 0")
 
-    reasons = {}
-    for row in rows:
-        reason = row.get("stop_reason") or ""
-        if reason:
-            reasons[reason] = reasons.get(reason, 0) + 1
+    if any("dead_end_state" in r for r in rows):
+        print()
+        print("  the dead end")
+        walls = dead_ends(rows)
+        for when, why, where in walls:
+            print(f"    {when:>6.2f}s  latched  {why}")
+            if where:
+                print(f"             at {where}")
+        if not walls:
+            print("    ..... never latched.")
+        # Why it declined, on the ticks it did not fire -- the same shape as
+        # gate_reason above, and the whole diagnosis when a wall is missed.
+        # "only N cones in view" is a blind car and "corridor reaches X m" is
+        # a corridor that was genuinely open; they need opposite fixes.
+        for why, count in ranked_reasons(rows, "dead_end_reason",
+                                          skip_when=lambda r: r.get(
+                                              "dead_end_state")
+                                          == "dead_end")[:4]:
+            print(f"    ..... {count:>4} ticks  {why}")
+        if not walls:
+            print("          A wall the car drove into and did not name is a "
+                  "detector or a\n          layout fault, not a decision "
+                  "fault. Read the top reason first.")
+
+    maze = [r for r in rows if r.get("maze_nodes")]
+    if maze:
+        last = maze[-1]
+        print()
+        print("  the map it built")
+        print(f"    ..... {last['maze_nodes']} nodes, "
+              f"{last.get('maze_edges', 0)} edges, "
+              f"{last.get('maze_dead_ends', 0)} dead end(s)")
+
+    if any("pose_measured" in r for r in rows):
+        print()
+        print("  the odometry the map rests on")
+        last = rows[-1]
+        measured = last.get("pose_measured", 0)
+        blind = len(rows) - measured
+        print(f"    ..... ended at ({last.get('pose_x', 0):+.2f}, "
+              f"{last.get('pose_y', 0):+.2f}) m, "
+              f"{last.get('pose_yaw_deg', 0):+.1f} deg")
+        print(f"    {mark(blind <= len(rows) * 0.1)} ticks with a measured "
+              f"step {measured} of {len(rows)}   {blind} carried no "
+              "measurement")
+        if blind > len(rows) * 0.1:
+            print("          A pose summed through blind stretches is a "
+                  "random walk with\n          gaps in it. Edge lengths from "
+                  "this run are worth less than usual.")
+
+    reasons = ranked_reasons(rows, "stop_reason")
     if reasons:
         print()
         print("  ticks the car would not have moved on")
-        for reason, count in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        for reason, count in reasons:
             print(f"    {count:>4}  {reason}")
     return 0
 

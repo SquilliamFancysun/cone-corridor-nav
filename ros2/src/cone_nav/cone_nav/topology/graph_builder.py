@@ -32,6 +32,13 @@ only one. The lengths are recorded because they are what the report plots and
 what a looped maze would need, not because the planner reads them. Saying so here
 is cheaper than someone later trusting a number that has never been on the
 critical path of anything.
+
+A length of **None** means unmeasured, and is a first-class answer rather than a
+gap. It is what an operator-assisted backtrack produces: the car is carried back
+to a junction, `odometry.Pose` cannot see the lift, and the next edge would
+otherwise be measured from an origin several metres from where the car actually
+was. `summary()` counts them, because a map whose lengths are mostly unmeasured
+should say so on the line everyone reads rather than in a field nobody opens.
 """
 
 JUNCTION = "junction"
@@ -71,8 +78,14 @@ class Edge(object):
         self.to_key = to_key
         self.length_m = length_m
 
+    @property
+    def measured(self):
+        return self.length_m is not None
+
     def __repr__(self):
-        return f"Edge({self.turn} -> {self.to_key}, {self.length_m:.2f} m)"
+        length = ("unmeasured" if self.length_m is None
+                  else f"{self.length_m:.2f} m")
+        return f"Edge({self.turn} -> {self.to_key}, {length})"
 
 
 class MazeMap(object):
@@ -98,13 +111,15 @@ class MazeMap(object):
             node = self.nodes[key] = Node(key, kind)
         return node
 
-    def record_pass(self, path, turn, length_m=0.0):
+    def record_pass(self, path, turn, length_m=None):
         """A gate was passed at `path`, taking `turn`. Returns the new key.
 
         Idempotent: driving the same junction twice -- which happens every time
         the car backs out of a dead end and takes the other branch -- must not
         duplicate the edge or double the length. The second traversal's length
-        is kept, being the one measured on a car that was not about to stop.
+        is kept, being the one measured on a car that was not about to stop --
+        unless it is None, where the first real measurement is kept instead: an
+        unmeasured re-drive should not erase a length that was measured.
         """
         here = identify(path)
         self._node(here, JUNCTION).kind = JUNCTION
@@ -114,7 +129,8 @@ class MazeMap(object):
         edges = self.edges.setdefault(here, [])
         for edge in edges:
             if edge.turn == turn:
-                edge.length_m = length_m
+                if length_m is not None or edge.length_m is None:
+                    edge.length_m = length_m
                 return there
         edges.append(Edge(turn, there, length_m))
         return there
@@ -145,11 +161,19 @@ class MazeMap(object):
         found = self.find(GOAL)
         return found[0] if found else None
 
+    @property
+    def all_edges(self):
+        for edges in self.edges.values():
+            for edge in edges:
+                yield edge
+
     def summary(self):
         """One line for the log and the console."""
-        return (f"{len(self.nodes)} nodes, "
-                f"{sum(len(e) for e in self.edges.values())} edges, "
-                f"{len(self.find(DEAD_END))} dead ends")
+        edges = list(self.all_edges)
+        unmeasured = sum(1 for e in edges if not e.measured)
+        return (f"{len(self.nodes)} nodes, {len(edges)} edges, "
+                f"{len(self.find(DEAD_END))} dead ends"
+                + (f", {unmeasured} edge(s) unmeasured" if unmeasured else ""))
 
     def __repr__(self):
         return f"MazeMap({self.summary()})"

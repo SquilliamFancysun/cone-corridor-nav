@@ -120,6 +120,7 @@ JUNCTION_STATUS_SCHEMA = {
         dead_end_state={"type": "string", "description": "clear / dead_end"},
         dead_end_reason={"type": "string", "description": "why the corridor is or is not judged to have ended. The first field to read when a backtrack fires or fails to"},
         dead_end_reach_m={"type": "number", "description": "reach of the UNANCHORED corridor line, which is what the decision is made on"},
+        cursor={"type": "string", "description": "route / explore -- what decided the turns. route_index and route_remaining mean different things in each"},
         explore_path={"type": "string", "description": "turns taken to reach where the car is -- the maze node's identity"},
         maze_nodes={"type": "integer"},
         maze_edges={"type": "integer"},
@@ -322,6 +323,7 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         pose_y=round(pose.y, 3) if pose else 0.0,
         pose_yaw_deg=round(pose.yaw_deg, 1) if pose else 0.0,
         pose_measured=pose.measured if pose else 0,
+        cursor=topo.cursor.label if topo else "",
         explore_path="/".join(topo.cursor.path) if topo else "",
         maze_nodes=len(maze.nodes) if maze else 0,
         maze_edges=(sum(len(e) for e in maze.edges.values()) if maze else 0),
@@ -616,8 +618,18 @@ def main(argv=None):
             # has not tried. The map records the same thing either way.
             if armed and not was_armed and dead_end_latch.latched:
                 dead_end_latch.release()
+                # The car has been carried somewhere between the release and
+                # now, and `rigid_step` cannot see a move that large -- it
+                # finds no cone within MATCH_GATE_M and returns None, which
+                # every other tick correctly reads as no motion. So the pose
+                # would silently omit the whole lift and every edge measured
+                # afterwards would start from the wrong place. Poisoning the
+                # frame makes those come back unmeasured instead of wrong.
+                pose.mark_discontinuity()
                 print(f"  [dead end released] X re-pressed -- now taking "
                       f"{topo.cursor.current or '-'}")
+                print("                      pose frame broken by the lift; "
+                      "edges across it are unmeasured")
 
             # All three read `was_armed` before it is overwritten below, so
             # the audio latches on the same rising edge the goal and the dead

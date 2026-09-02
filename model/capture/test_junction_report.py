@@ -190,3 +190,106 @@ def test_a_single_junction_log_still_expects_one():
     """The old bring-up logs must keep reading correctly."""
     rows = rows_with(gate_detect.NO_REDS, 0, 0)
     assert junction_report.route_length(rows) == 1
+
+
+# --- exploring runs -----------------------------------------------------
+
+def explore_rows(ticks=30, walls=(), remaining=1, path="left"):
+    """An exploring run. `walls` are tick indices where the latch is set."""
+    rows = []
+    latched = False
+    for i in range(ticks):
+        latched = latched or i in walls
+        rows.append({
+            "t": i * 0.1, "cursor": "explore", "gate_live": False,
+            "gate_reason": "no reds", "topo_state": "follow",
+            "route_index": 1, "route_remaining": remaining,
+            "explore_path": path,
+            "dead_end_state": "dead_end" if latched else "clear",
+            "dead_end_reason": ("corridor ends 0.42 m ahead (orange wall seen)"
+                                if latched else "corridor reaches 2.40 m"),
+            "maze_nodes": 3, "maze_edges": 2, "maze_dead_ends": 1,
+            "pose_x": 1.0, "pose_y": 0.0, "pose_yaw_deg": 0.0,
+            "pose_measured": ticks,
+        })
+    return rows
+
+
+def test_an_exploring_run_has_no_route_length():
+    """The bug this fixes: route_index + route_remaining is 0 on tick one of
+    an exploring run, so the old sum reported a zero-junction route and turned
+    every manoeuvre into a fault."""
+    assert junction_report.route_length(explore_rows()) is None
+    assert junction_report.cursor_of(explore_rows()) == "explore"
+
+
+def test_a_route_run_still_reports_its_length():
+    rows = [{"t": 0.0, "cursor": "route", "route_index": 0,
+             "route_remaining": 2}]
+    assert junction_report.route_length(rows) == 2
+
+
+def test_a_log_from_before_the_cursor_field_still_reads_as_a_route():
+    """Every trial log on disk predates it, and they must keep reporting."""
+    rows = [{"t": 0.0, "route_index": 0, "route_remaining": 2}]
+    assert junction_report.cursor_of(rows) == ""
+    assert junction_report.route_length(rows) == 2
+
+
+def test_the_report_does_not_grade_an_exploring_run_against_a_route(capsys):
+    """Entering the manoeuvre more often than a route would is the POINT when
+    the car is discovering the maze -- every branch driven twice is one it
+    backed out of. Grading it against an expectation invents a fault."""
+    junction_report.report(explore_rows(walls=(20,)), "explore.jsonl")
+    out = capsys.readouterr().out
+    assert "exploring, no route" in out
+    assert "expect" not in out.split("the manoeuvre")[1].split("the branch")[0]
+
+
+def test_a_latched_wall_is_reported_with_its_reason(capsys):
+    junction_report.report(explore_rows(walls=(20,)), "explore.jsonl")
+    out = capsys.readouterr().out
+    assert "latched" in out
+    assert "orange wall seen" in out
+
+
+def test_a_wall_that_never_latched_is_diagnosed_from_the_reasons(capsys):
+    """The whole point of the histogram: 'only N cones in view' is a blind car
+    and 'corridor reaches X m' is a corridor that was genuinely open. They
+    need opposite fixes and dead_end_state shows neither."""
+    junction_report.report(explore_rows(walls=()), "explore.jsonl")
+    out = capsys.readouterr().out
+    assert "never latched" in out
+    assert "corridor reaches 2.40 m" in out
+    assert "detector or a" in out
+
+
+def test_the_reasons_that_did_fire_are_not_counted_against_the_latch(capsys):
+    """Once latched the reason is the wall's own description, and counting it
+    in the why-not histogram would rank the success as a cause of failure."""
+    junction_report.report(explore_rows(walls=(10,)), "explore.jsonl")
+    out = capsys.readouterr().out
+    section = out.split("the dead end")[1]
+    assert "corridor reaches 2.40 m" in section
+
+
+def test_the_map_and_the_odometry_are_reported(capsys):
+    junction_report.report(explore_rows(walls=(20,)), "explore.jsonl")
+    out = capsys.readouterr().out
+    assert "3 nodes, 2 edges, 1 dead end(s)" in out
+    assert "the odometry the map rests on" in out
+
+
+def test_a_run_full_of_blind_ticks_says_the_lengths_are_worth_less():
+    """A pose summed through gaps is still a number, and a report that shows
+    it without that caveat invites trusting an edge length that was never
+    measured."""
+    rows = explore_rows(walls=(20,))
+    for row in rows:
+        row["pose_measured"] = 3
+    import io
+    import contextlib
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        junction_report.report(rows, "explore.jsonl")
+    assert "worth less than usual" in buffer.getvalue()

@@ -95,7 +95,44 @@ def test_no_goal_reads_as_none_rather_than_raising():
 
 def test_summary_counts_what_the_console_line_shows():
     maze = MazeMap()
-    maze.record_pass([], LEFT)
+    maze.record_pass([], LEFT, length_m=2.0)
     maze.record_dead_end([LEFT])
-    maze.record_pass([], RIGHT)
+    maze.record_pass([], RIGHT, length_m=2.1)
     assert maze.summary() == "3 nodes, 2 edges, 1 dead ends"
+
+
+# --- unmeasured edges ---------------------------------------------------
+
+def test_an_edge_with_no_length_is_unmeasured_not_zero():
+    """What an operator-assisted backtrack produces: the car was carried, the
+    pose could not see it, and a length measured across that is wrong rather
+    than merely absent."""
+    maze = MazeMap()
+    maze.record_pass([], LEFT)
+    edge = maze.neighbours(maze.root)[0]
+    assert edge.length_m is None
+    assert not edge.measured
+
+
+def test_the_summary_says_when_lengths_are_missing():
+    """On the line everyone reads, not in a field nobody opens."""
+    maze = MazeMap()
+    maze.record_pass([], LEFT)
+    assert "1 edge(s) unmeasured" in maze.summary()
+
+
+def test_an_unmeasured_re_drive_does_not_erase_a_measured_length():
+    """The car drives a junction twice every time it backs out of one. The
+    second pass may be the carried one; it must not delete what the first
+    pass actually measured."""
+    maze = MazeMap()
+    maze.record_pass([], LEFT, length_m=2.0)
+    maze.record_pass([], LEFT, length_m=None)
+    assert maze.neighbours(maze.root)[0].length_m == 2.0
+
+
+def test_a_measured_re_drive_replaces_an_unmeasured_length():
+    maze = MazeMap()
+    maze.record_pass([], LEFT)
+    maze.record_pass([], LEFT, length_m=2.4)
+    assert maze.neighbours(maze.root)[0].length_m == 2.4

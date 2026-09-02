@@ -49,12 +49,15 @@ class Pose(object):
     base_link, with the origin wherever the car was on the first step.
     """
 
-    __slots__ = ("x", "y", "yaw_rad", "steps", "measured", "path_m")
+    __slots__ = ("x", "y", "yaw_rad", "steps", "measured", "path_m", "jumps")
 
     def __init__(self, x=0.0, y=0.0, yaw_rad=0.0):
         self.x = x
         self.y = y
         self.yaw_rad = yaw_rad
+        # How many times the frame has been broken under the car. See
+        # `mark_discontinuity`.
+        self.jumps = 0
         # Ticks integrated, and how many of those carried a real measurement.
         # Their difference is the run's blind fraction and belongs in any
         # report that quotes a distance from this.
@@ -98,14 +101,38 @@ class Pose(object):
     def yaw_deg(self):
         return math.degrees(self.yaw_rad)
 
+    def mark_discontinuity(self):
+        """The car was moved by something this cannot see. Poison the frame.
+
+        Carrying the car back to a junction is the case that matters, and it
+        is invisible from here: `rigid_step` finds no cone within
+        `MATCH_GATE_M` of where it was, returns None, and the loop reads that
+        -- correctly, for every other cause -- as NO MOTION. So the pose
+        silently omits several metres and every later number inherits it.
+
+        Marking it does not repair anything, and cannot: the frame after a
+        lift is a different frame, and nothing here knows the transform
+        between them. What it buys is that measurements spanning the break
+        come back as None instead of as a plausible wrong number --
+        `distance_between` refuses, and `graph_builder` records the edge as
+        unmeasured.
+
+        Only a DECLARED lift is caught. Someone who picks the car up without
+        the tool being told still corrupts the pose exactly as before, and
+        the only tell is in the map not matching the track.
+        """
+        self.jumps += 1
+        return self.jumps
+
     def snapshot(self):
-        """An immutable (x, y, yaw_rad) to keep past this tick.
+        """An immutable (x, y, yaw_rad, jumps) to keep past this tick.
 
         The Pose keeps mutating, so anything recording where a junction was --
         `graph_builder`, chiefly -- must take one of these rather than a
-        reference to the live object.
+        reference to the live object. The jump count rides along so that two
+        snapshots can tell whether the frame moved under them in between.
         """
-        return (self.x, self.y, self.yaw_rad)
+        return (self.x, self.y, self.yaw_rad, self.jumps)
 
     def to_world(self, x, y):
         """A point in the car's CURRENT base_link -> the start frame.
@@ -122,14 +149,22 @@ class Pose(object):
 
 
 def distance_between(a, b):
-    """Straight-line metres between two snapshots.
+    """Straight-line metres between two snapshots, or None across a break.
 
     The right measure for a `graph_builder` edge, and deliberately not
     `Pose.path_m`. Path length sums magnitudes, so per-step noise accumulates
     with a positive bias and a car standing still slowly gains distance; the
     separation of two poses does not, because the noise cancels in the sum
     before the magnitude is taken.
+
+    None when the two snapshots sit either side of a `mark_discontinuity` --
+    they are in different frames, so subtracting them yields a number with no
+    referent. Returning it anyway is the failure worth avoiding here: an edge
+    length that is wrong is worse than one that is missing, because only the
+    missing one announces itself.
     """
+    if a[3] != b[3]:
+        return None
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
 

@@ -90,6 +90,11 @@ class ExplorePolicy(object):
 
     __slots__ = ("first", "stack", "pending", "_resuming", "_dead_ends", "note")
 
+    # See RouteCursor.label. In an exploring run `remaining` counts branches
+    # FOUND and not yet tried rather than route entries left to read, and a
+    # report that does not know which it is holding will misread both.
+    label = "explore"
+
     def __init__(self, first=LEFT):
         if first not in TURNS:
             raise ValueError(

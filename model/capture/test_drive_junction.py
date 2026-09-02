@@ -509,3 +509,22 @@ def test_the_dead_end_latch_is_held_down_through_a_junction_mouth():
         latch.update(_FakeLine(0.3), _cones(), oranges=[_FakeCone(1.0, 0.0)],
                      armed=False)
     assert not latch.latched
+
+
+def test_an_edge_measured_across_a_lift_comes_back_unmeasured():
+    """The operator-assisted backtrack, end to end through the two pieces
+    that have to agree: the pose is poisoned when the car is carried, and the
+    map records the next edge as unmeasured rather than as a length taken
+    from an origin metres from where the car really was."""
+    pose = odometry.Pose()
+    maze = graph_builder.MazeMap()
+    at_junction = pose.snapshot()
+
+    pose.integrate(ego_motion.Step(2.5, 0.0, 0.0, 4))   # down the dead end
+    pose.mark_discontinuity()                           # carried back
+    pose.integrate(ego_motion.Step(2.6, 0.0, 0.0, 4))   # the other branch
+
+    maze.record_pass([], "right", length_m=odometry.distance_between(
+        at_junction, pose.snapshot()))
+    assert maze.neighbours(maze.root)[0].length_m is None
+    assert "unmeasured" in maze.summary()

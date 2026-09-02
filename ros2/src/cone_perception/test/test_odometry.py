@@ -166,3 +166,34 @@ def test_a_landmark_stays_put_while_the_car_drives_past_it():
     pose.integrate(straight(1.0))
     second = pose.to_world(2.0, 0.5)
     assert second == pytest.approx(first)
+
+
+# --- a frame broken under the car ---------------------------------------
+
+def test_a_fresh_pose_has_no_breaks():
+    assert Pose().snapshot()[3] == 0
+
+
+def test_marking_a_lift_separates_the_frames():
+    pose = Pose()
+    before = pose.snapshot()
+    pose.mark_discontinuity()
+    pose.integrate(straight(1.0))
+    assert distance_between(before, pose.snapshot()) is None
+
+
+def test_distances_within_one_frame_still_measure():
+    pose = Pose()
+    pose.mark_discontinuity()
+    after = pose.snapshot()
+    pose.integrate(straight(2.0))
+    assert distance_between(after, pose.snapshot()) == pytest.approx(2.0)
+
+
+def test_a_lift_does_not_pretend_to_repair_the_position():
+    """Marking is not a fix. The frame after a lift is a different frame and
+    nothing here knows the transform, so x and y are left exactly as they
+    were -- what changes is that measurements across the break refuse."""
+    pose = Pose().integrate(straight(1.0))
+    pose.mark_discontinuity()
+    assert pose.x == pytest.approx(1.0)
