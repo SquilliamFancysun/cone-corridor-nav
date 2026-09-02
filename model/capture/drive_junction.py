@@ -117,6 +117,8 @@ JUNCTION_STATUS_SCHEMA = {
         pose_y={"type": "number"},
         pose_yaw_deg={"type": "number"},
         pose_measured={"type": "integer", "description": "ticks the pose was advanced by a real measurement. Below `t`*rate means the run has blind stretches in it"},
+        pose_jumps={"type": "integer", "description": "declared lifts. Anything measured across one is in a different frame and comes back unmeasured"},
+        cones_xy={"type": "string", "description": "this tick's cones in base_link as x,y,class;... -- what analysis/map_from_log.py turns into a map. Pre-fill and pre-branch-filter, the same list the odometry is fitted on"},
         dead_end_state={"type": "string", "description": "clear / dead_end"},
         dead_end_reason={"type": "string", "description": "why the corridor is or is not judged to have ended. The first field to read when a backtrack fires or fails to"},
         dead_end_reach_m={"type": "number", "description": "reach of the UNANCHORED corridor line, which is what the decision is made on"},
@@ -323,6 +325,7 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         pose_y=round(pose.y, 3) if pose else 0.0,
         pose_yaw_deg=round(pose.yaw_deg, 1) if pose else 0.0,
         pose_measured=pose.measured if pose else 0,
+        pose_jumps=pose.jumps if pose else 0,
         cursor=topo.cursor.label if topo else "",
         explore_path="/".join(topo.cursor.path) if topo else "",
         maze_nodes=len(maze.nodes) if maze else 0,
@@ -776,6 +779,14 @@ def main(argv=None):
                 status["stop_reason"] = "goal reached"
 
             status["labeled_by_memory"] = remembered
+            # The map's raw material. Pre-fill and pre-branch-filter, which is
+            # the list `ego_motion` is fitted on: the fill only repaints and
+            # `keep_branch` DELETES, so a map built after either would lose
+            # exactly the cones a junction is made of. ~14 bytes a cone, so a
+            # 600-tick run grows by a few hundred KB against a log already
+            # half a megabyte.
+            status["cones_xy"] = ";".join(
+                f"{c.x:.3f},{c.y:.3f},{c.cone_class}" for c in result.cones)
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
             status["odo_lateral_m"] = round(odo_step.lateral_m, 4) if odo_step else 0.0
             status["odo_yaw_deg"] = (round(math.degrees(odo_step.yaw_rad), 3)
