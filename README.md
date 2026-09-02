@@ -122,5 +122,8 @@ any change to cabling, ports, or power.
   splits, and dataset card ARE in git. See `model/README.md` for where images live.
 - **Model weights** (`*.pt`, `*.onnx`, `*.blob`) — attach the trained model to a
   GitHub Release instead; training configs and curves ARE in git.
+- **Driving audio** (`model/capture/audio/`) — 7 MB of mp3 on the `audio-v1`
+  Release. `deploy.sh` fetches it onto the car when the car does not have it;
+  the code that plays it IS in git.
 - **Rosbags** (`*.db3`, `*.mcap`) — trial CSV summaries and analysis outputs ARE
   in git.

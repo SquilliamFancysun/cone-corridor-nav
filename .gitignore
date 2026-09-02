@@ -30,6 +30,12 @@ model/training/runs/
 # Commit stamp written by model/capture/deploy.sh at deploy time
 model/capture/VERSION
 
+# Driving audio: 7 MB of mp3 that changes on its own schedule, kept out of git
+# for the same reason weights are. It lives on the audio-v1 Release, deploy.sh
+# fetches it onto the car when the car is missing it, and the --delete rsync
+# excludes audio/ so a deploy never strips it back off.
+model/capture/audio/
+
 # Measured on the car by `lidar_view.py --calibrate` and only true of that car's
 # mount. deploy.sh never pushes it, so a copy in git would be a second set of
 # numbers that nothing reads. The human record is the flags line in

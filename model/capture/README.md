@@ -49,20 +49,37 @@ in `~/env`, and `joystick.py` avoids `evdev` (not installed) and `pygame` (wants
 an SDL video driver we do not have over SSH). The lidar tool wants one package —
 see [Install](#install) below.
 
-**Weights are not deployed.** `deploy.sh` pushes code; `*.pt` is gitignored and
-lives on a GitHub Release instead, because weights change on their own schedule
-and a 6 MB binary re-pushed on every code deploy would be slow for no reason.
-`detect_view.py` and `fusion_view.py` both want a `--weights` path that already
-exists on the car:
+**The big binaries are not in git.** `deploy.sh` pushes code; the weights
+(`*.pt`, 6 MB) and the driving audio (`audio/*.mp3`, 7 MB) are gitignored and
+live on GitHub Releases, because both change on their own schedule and
+re-pushing them with every code deploy would be slow for no reason.
+
+`deploy.sh` now fetches them for you, but **only when the car does not already
+have them**, so a routine code deploy stays as fast as it was:
+
+| asset | release | lands on the car at |
+|---|---|---|
+| `best.pt` | `weights-v3` | `~/models/best.pt` |
+| `DrivingSound.mp3`, `EndSound.mp3` | `audio-v1` | `~/cone_capture_tool/audio/` |
+
+By hand, if `gh` is not on the machine you deploy from:
 
 ```bash
 gh release download weights-v3 --pattern 'best.pt'
 scp best.pt <car>:models/best.pt
+
+gh release download audio-v1 --dir audio
+scp audio/*.mp3 <car>:cone_capture_tool/audio/
 ```
 
 See [`../training/README.md`](../training/README.md#getting-weights-onto-the-car)
-for the hash check, which is worth doing — a truncated `scp` leaves a file that
-still loads.
+for the weights hash check, which is worth doing — a truncated `scp` leaves a
+file that still loads.
+
+`audio/` is excluded from the `--delete` rsync for the same reason
+`calibration.json` is: the directory is not in the repo, so without the exclude
+every deploy would delete it off the car and the next run would drive in
+silence.
 
 ## Fusion and the corridor centerline
 
@@ -935,6 +952,11 @@ the run does. When the goal latch reaches `stopped`, the driving track is
 replaced by `audio/EndSound.mp3` exactly once. Later X presses do not restart
 the driving track or cut off the finish clip. Ctrl-C and every normal shutdown
 path stop either player.
+
+The two mp3s are not in git — they come from the `audio-v1` Release and
+`deploy.sh` puts them in `~/cone_capture_tool/audio/` when the car is missing
+them. A car with no audio files still drives: playback warns and the run
+continues.
 
 Playback uses `pw-play` on PipeWire's default sink and runs outside the control
 loop. `--audio-volume 0.0..1.0` changes the stream volume,

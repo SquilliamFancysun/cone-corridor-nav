@@ -87,6 +87,7 @@ rsync -av --delete \
   --exclude='conftest.py' \
   --exclude='fixtures' \
   --exclude='calibration.json' \
+  --exclude='audio' \
   --exclude='myconfig_capture.py' \
   --exclude='cone_perception' \
   --exclude='cone_nav' \
@@ -117,6 +118,58 @@ done
 rsync -av "$REPO/data/routes/" "$HOST:cone_capture_tool/routes/"
 
 scp "$HERE/myconfig_capture.py" "$HOST:mycar/"
+
+# The big binaries are deliberately not in git: weights (6 MB) and driving audio
+# (7 MB) both change on their own schedule, and re-pushing them with every code
+# deploy would be slow for no reason. They live on GitHub Releases instead.
+#
+# Fetched onto the car ONLY when the car does not already have them, which is
+# what keeps a routine code deploy as fast as it was before. All of it runs
+# after the code is already across, and none of it can fail the deploy: a car
+# with no audio still drives (drive_junction.py warns and carries on), and a car
+# with no weights was already going to say so.
+#
+# The `--exclude='audio'` on the --delete rsync above is what makes fetching
+# once rather than every time safe. Without it each deploy would delete an
+# audio/ the repo no longer contains -- the same trap that cost 22 s of
+# stage-3 trial data.
+fetch_to_car() {  # <release tag> <asset name> <directory on the car>
+  local tag="$1" asset="$2" dir="$3" tmp=""
+
+  if ssh "$HOST" "test -s '$dir/$asset'" 2>/dev/null; then
+    echo "  $asset -- already on the car in $dir/"
+    return 0
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "  warning:  $dir/$asset is missing on the car and gh is not installed,"
+    echo "            so it cannot be fetched. By hand:"
+    echo "              gh release download $tag --pattern '$asset'"
+    echo "              scp $asset $HOST:$dir/"
+    return 0
+  fi
+
+  tmp="$(mktemp -d)"
+  if GIT_TERMINAL_PROMPT=0 gh release download "$tag" --pattern "$asset" --dir "$tmp" >/dev/null 2>&1; then
+    ssh "$HOST" "mkdir -p '$dir'" 2>/dev/null || true
+    if scp -q "$tmp/$asset" "$HOST:$dir/" 2>/dev/null; then
+      echo "  $asset -- fetched from $tag, copied to $dir/"
+    else
+      echo "  warning:  downloaded $asset but could not copy it to $HOST:$dir/"
+    fi
+  else
+    echo "  warning:  could not download $asset from release $tag."
+    echo "            Check 'gh auth status', then:"
+    echo "              gh release download $tag --pattern '$asset'"
+    echo "              scp $asset $HOST:$dir/"
+  fi
+  rm -rf "$tmp"
+}
+
+echo
+echo "Release assets (fetched only when the car does not have them):"
+fetch_to_car audio-v1   DrivingSound.mp3 cone_capture_tool/audio
+fetch_to_car audio-v1   EndSound.mp3     cone_capture_tool/audio
+fetch_to_car weights-v3 best.pt          models
 
 # Tag the deploy so this exact revision is fetchable BY NAME forever, even if
 # the branch moves on. A tag is the thing a bare sha is not: advertised by the
