@@ -24,18 +24,15 @@ CLOSED = "closed"
 _CLOSE = object()
 
 
-def update_for_deadman(audio, armed, was_armed, goal_stopped=False):
-    """Apply one deadman edge to an ``AudioController``-like object.
+def update_for_deadman(audio, armed, was_armed):
+    """Latch driving music on at the first X press of a program run.
 
-    Releasing X normally silences the driving track. After arrival it must not
-    cut off the one-shot finish clip, so a falling edge is ignored while the
-    goal latch is stopped. Re-arming after the latch is released starts the
-    driving track again.
+    Deadman release still stops the car, but it deliberately does not stop or
+    restart music. Once requested, the driving track owns playback until the
+    goal transition replaces it or program shutdown closes the controller.
     """
-    if armed and not was_armed:
+    if armed and not was_armed and audio.state == STOPPED:
         audio.start_driving()
-    elif not armed and was_armed and not goal_stopped:
-        audio.stop()
 
 
 def update_for_goal(audio, goal_stopped, state_changed):
@@ -141,12 +138,25 @@ class AudioController:
                 command = self._commands.get(timeout=0.1)
             except queue.Empty:
                 if process is not None and process.poll() is not None:
-                    if process.returncode:
+                    returncode = process.returncode
+                    ended_state = active_state
+                    if returncode:
                         self._warn(
                             "audio player exited with status %s while %s"
-                            % (process.returncode, active_state))
+                            % (returncode, ended_state))
                     process = None
                     active_state = STOPPED
+                    with self._lock:
+                        loop_driving = (
+                            not self._closed
+                            and self._desired == DRIVING
+                            and ended_state == DRIVING
+                            and returncode == 0
+                        )
+                    if loop_driving:
+                        process = self._start_process(DRIVING)
+                        if process is not None:
+                            active_state = DRIVING
                 continue
 
             if process is not None:
@@ -159,21 +169,26 @@ class AudioController:
             if command == STOPPED:
                 continue
 
-            path = self.drive_audio if command == DRIVING else self.goal_audio
-            if not path.is_file():
-                self._warn("audio file not found: %s" % path)
-                continue
-
-            argv = [self.player, "--volume", "%.3f" % self.volume]
-            if self.target:
-                argv.extend(("--target", str(self.target)))
-            argv.append(str(path))
-
-            try:
-                process = self._popen(argv, stdout=subprocess.DEVNULL)
+            process = self._start_process(command)
+            if process is not None:
                 active_state = command
-            except (OSError, subprocess.SubprocessError) as exc:
-                self._warn("could not start audio player: %s" % exc)
+
+    def _start_process(self, state):
+        path = self.drive_audio if state == DRIVING else self.goal_audio
+        if not path.is_file():
+            self._warn("audio file not found: %s" % path)
+            return None
+
+        argv = [self.player, "--volume", "%.3f" % self.volume]
+        if self.target:
+            argv.extend(("--target", str(self.target)))
+        argv.append(str(path))
+
+        try:
+            return self._popen(argv, stdout=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._warn("could not start audio player: %s" % exc)
+            return None
 
     def _stop_process(self, process):
         if process.poll() is not None:

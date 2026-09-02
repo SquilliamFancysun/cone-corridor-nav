@@ -305,7 +305,8 @@ def parse_args(argv=None):
                              "the car mid-course")
     parser.add_argument("--drive-audio",
                         default=str(audio_playback.DEFAULT_DRIVE_AUDIO),
-                        help="main track played while X is held")
+                        help="main track latched on by the first X press and "
+                             "played until the goal")
     parser.add_argument("--goal-audio",
                         default=str(audio_playback.DEFAULT_GOAL_AUDIO),
                         help="finish clip played once when the goal stops the "
@@ -504,8 +505,7 @@ def main(argv=None):
             if armed and not was_armed and goal_latch.stopped:
                 goal_latch.release()
                 print("  [goal released] X re-pressed -- driving again")
-            audio_playback.update_for_deadman(
-                audio, armed, was_armed, goal_stopped=goal_latch.stopped)
+            audio_playback.update_for_deadman(audio, armed, was_armed)
             was_armed = armed
 
             scan = reader.take()
