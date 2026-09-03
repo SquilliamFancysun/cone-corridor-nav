@@ -206,3 +206,24 @@ def test_the_first_wall_of_a_run_needs_no_travel_first():
     """A car that starts facing a wall must still name it."""
     latch = DeadEndLatch()
     assert run(latch, 20, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
+
+
+def test_a_collapsed_line_is_not_a_wall():
+    """Measured on the car 2026-09-02 (`explore-3.jsonl`): the latch fired
+    twice reporting "corridor ends 0.00 m ahead", which is a contradiction --
+    reach 0.00 with zero centerline points is the pairing failing, not a
+    corridor that stopped short. Cone count alone did not catch it: clusters
+    were in view and the pairing still produced nothing."""
+    latch = DeadEndLatch()
+    empty = FakeLine(0)
+    assert len(empty.points) == 0
+    assert run(latch, 60, empty, oranges=[FakeCone(1.0, 0.0)]) == CLEAR
+    assert "collapsed" in latch.reason
+
+
+def test_a_real_wall_still_has_a_line_behind_it():
+    """The distinction the refusal turns on: a wall is a corridor that stops
+    SHORT, so the last pair is still there and reach lands near 0.8 m."""
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.8), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
+    assert "0.80 m" in latch.reason

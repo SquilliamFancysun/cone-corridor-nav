@@ -34,6 +34,14 @@ blocked. Three things guard it, and all three are needed:
 
   - a dead end is *made of cones*, so a collapsed line with almost nothing in
     view is a blind car, not a wall. `min_cones` refuses that case outright.
+  - **the line itself has to have survived.** A wall is a corridor that stops
+    SHORT -- the last blue/yellow pair is still there, still pairing, still
+    producing a midpoint, and reach lands somewhere around 0.8 m. A line with
+    no points at all is not a short corridor, it is the absence of one, and
+    reading it as a wall makes `reach` say the corridor "ends 0.00 m ahead",
+    which is a contradiction rather than a measurement. Cone count alone does
+    not catch this: measured 2026-09-02 (`explore-3.jsonl`), plenty of clusters
+    were in view and the pairing still produced nothing.
   - a single-boundary fallback line is what the car produces while it is
     confused about one wall, which is a description of a dropout. Refused.
   - the signal must hold for several consecutive ticks. A stopped car's scan
@@ -201,6 +209,12 @@ class DeadEndLatch(object):
         if len(cones) < self.min_cones:
             # The dropout case. A wall is made of cones; a blind car is not.
             return f"only {len(cones)} cones in view"
+        if len(line.points) < 2:
+            # A wall is a corridor that stops short, so a corridor still has to
+            # be there to have stopped. No points is the pairing failing, and
+            # it reports as "ends 0.00 m ahead" -- which is what fired twice on
+            # 2026-09-02 in place of the real wall a metre further on.
+            return f"line collapsed to {len(line.points)} point(s)"
         if line.single_boundary_fallback:
             return "single-boundary fallback"
         if self.reach_m >= self.min_reach_m:
