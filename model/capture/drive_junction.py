@@ -900,12 +900,21 @@ def main(argv=None):
                 health = " / ".join(
                     t for t in (health, drive_corridor.pad_health(deadman))
                     if t)
+                # The dead end says why it declined, beside the gate and the
+                # goal saying the same. Without it the only way to tell "the
+                # corridor is genuinely still open" from "held down inside a
+                # mouth" from "the pairing collapsed" is to pull the log --
+                # which is no use to someone watching a car drive at a wall.
+                # Suppressed once latched: `stop_reason` already says that.
+                wall = ("" if dead_end_latch.latched
+                        else f"  wall? [{dead_end_latch.reason}]"
+                        if dead_end_latch.reason else "")
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
                       f"{topo.state} {reds}"
                       + (f"/{topo.turn}" if topo.engaged else "")
-                      + goal_line
+                      + goal_line + wall
                       # status['stop_reason'], not duty.reason: once latched
                       # the line is the anchor alone and the speed law says
                       # "centerline too short", which is true, incidental, and
