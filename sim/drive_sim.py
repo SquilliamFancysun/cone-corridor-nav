@@ -539,11 +539,15 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # car's. Run before the stall check so a wall is reported as a wall
         # rather than as the generic zero-duty stop it also is -- which is the
         # entire difference this module exists to make.
+        # Armed outside the manoeuvre and again past the gate line, and fed
+        # the measured travel the re-arm floor counts. Keep identical to
+        # drive_junction.drive_pipeline.
+        engaged = topo is not None and topo.engaged
+        past = topo is not None and topo.past_gate
         dead_end_latch.update(
             corridor_line, cones, oranges=split(cones).dead_ends,
-            armed=not (topo is not None and topo.engaged)
-            and not goal_latch.run_in,
-            origin=rear_axle_in_base)
+            armed=(not engaged or past) and not goal_latch.run_in,
+            origin=rear_axle_in_base, travel_m=last_travel)
         if dead_end_latch.latched:
             if topo is not None:
                 resume = topo.cursor.dead_end()

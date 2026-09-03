@@ -412,3 +412,44 @@ def test_the_traverse_bound_is_sizable_for_a_pushed_car():
     assert topo.max_traverse_ticks == 5
     assert TopoState(RouteCursor(["left"])).max_traverse_ticks \
         == MAX_TRAVERSE_TICKS
+
+
+# --- when the dead-end detector may run ---------------------------------
+
+def test_the_mouth_is_not_past_the_gate():
+    """`engaged` holds the dead-end detector down because a junction mouth
+    legitimately looks like a short one-sided corridor."""
+    topo = machine()
+    commit(topo)
+    assert topo.engaged
+    assert not topo.past_gate
+
+
+def test_the_car_is_past_the_gate_once_it_has_driven_the_commit_range():
+    topo = machine()
+    commit(topo)
+    topo.update(None, SHORT, travel_m=GATE_RANGE_M)
+    assert topo.engaged, "still in the manoeuvre"
+    assert topo.past_gate, "but past the gate line, so a wall is a wall"
+
+
+def test_a_short_stub_is_reachable_before_the_manoeuvre_ends():
+    """The failure this exists for. A traverse ends only after
+    commit_range + CLEAR_PAST_GATE_M, so on a stub shorter than that the car
+    meets the wall still inside the manoeuvre. Measured 2026-09-02: committed
+    at 2.71 m, needing 3.21 m, against a 2.5 m stub."""
+    topo = machine()
+    commit(topo)
+    stub = GATE_RANGE_M + 0.2          # shorter than the pass floor
+    topo.update(None, SHORT, travel_m=stub)
+    assert stub < GATE_RANGE_M + CLEAR_PAST_GATE_M, "not the case under test"
+    assert topo.state == TRAVERSE, "the manoeuvre has NOT ended"
+    assert topo.past_gate, "and the detector must be armed anyway"
+
+
+def test_following_is_never_past_a_gate():
+    topo = machine()
+    assert not topo.past_gate
+    pass_gate(commit(topo) and topo)
+    assert topo.state == FOLLOW
+    assert not topo.past_gate

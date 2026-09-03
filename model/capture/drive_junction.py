@@ -285,9 +285,14 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
         # gate or a trophy it does not contain. Held down wherever the corridor
         # is ALLOWED to end -- through a mouth, and over the goal run-in. See
         # cone_nav/topology/dead_end.py.
+        # Armed outside the manoeuvre, and again once the car is past the gate
+        # line: see `TopoState.past_gate`. Still held down over the goal
+        # run-in, where the course really has ended.
+        past = topo is not None and topo.past_gate
         dead_end_latch.update(
             corridor_line, cones, oranges=split(cones).dead_ends,
-            armed=not engaged and not run_in, origin=axle, travel_m=travel_m)
+            armed=(not engaged or past) and not run_in,
+            origin=axle, travel_m=travel_m)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
             junction, dropped, survey, remembered, goal_survey)
 
@@ -472,6 +477,26 @@ def dry_run_travel(step, deadband_m=ego_motion.DEADBAND_M):
     return travel, step.yaw_rad
 
 
+RULE = "=" * 66
+
+
+def banner(headline, detail=""):
+    """Print a state change so it survives a 1 Hz status stream.
+
+    The bench line prints every second, and the transitions used to print at
+    the same indent and weight -- so the one event worth reacting to, the car
+    changing its mind about what it is doing, scrolled past looking exactly
+    like the ninety lines around it. Blank lines and a rule are what make it
+    findable at a glance while walking beside a moving car, which is the only
+    condition this output is ever read in.
+    """
+    print("\n" + RULE)
+    print("  " + headline)
+    if detail:
+        print("  " + detail)
+    print(RULE + "\n")
+
+
 def announce(args):
     if args.explore:
         print(f"explore   no route: deciding at each junction, trying "
@@ -638,7 +663,7 @@ def main(argv=None):
             # drive the car into the trophy it just stopped at.
             if armed and not was_armed and goal_latch.stopped:
                 goal_latch.release()
-                print("  [goal released] X re-pressed -- driving again")
+                banner("GOAL RELEASED   driving again")
 
             # And clears a dead end, which is what makes an operator-assisted
             # backtrack possible before `reverse_ctrl` exists: the car stops at
@@ -656,10 +681,11 @@ def main(argv=None):
                 # afterwards would start from the wrong place. Poisoning the
                 # frame makes those come back unmeasured instead of wrong.
                 pose.mark_discontinuity()
-                print(f"  [dead end released] X re-pressed -- now taking "
-                      f"{topo.cursor.current or '-'}")
-                print("                      pose frame broken by the lift; "
-                      "edges across it are unmeasured")
+                banner(
+                    "DEAD END RELEASED   now taking "
+                    f"{(topo.cursor.current or '-').upper()}",
+                    "pose frame broken by the lift; edges across it are "
+                    "unmeasured")
 
             # All three read `was_armed` before it is overwritten below, so
             # the audio latches on the same rising edge the goal and the dead
@@ -729,11 +755,11 @@ def main(argv=None):
                 maze.record_dead_end(topo.cursor.path)
                 resume = topo.cursor.dead_end()
                 last_node_pose = pose.snapshot()
-                print(f"  [DEAD END] {dead_end_latch.reason}")
-                print("             " + (
-                    f"back out to the last junction and take {resume}"
-                    if resume else
-                    "nothing left to explore -- every branch has been tried"))
+                banner(
+                    f"*** DEAD END ***   {dead_end_latch.reason}",
+                    (f"back out to the last junction and take {resume.upper()}"
+                     if resume else
+                     "nothing left to explore -- every branch has been tried"))
             was_dead_end = dead_end_latch.latched
 
             if goal_latch.stopped and not was_at_goal:
@@ -843,11 +869,12 @@ def main(argv=None):
             # State changes are rare and each one matters, so they print when
             # they happen rather than waiting for the once-a-second line.
             if topo.state != last_state or topo.note:
-                print(f"  [{last_state} -> {topo.state}] turn "
-                      f"{topo.turn or '-'}, gate "
-                      f"{status['gate_range_m']:.2f} m, "
-                      f"{topo.cursor.remaining} left"
-                      + (f"  ({topo.note})" if topo.note else ""))
+                banner(
+                    f"{last_state.upper()} -> {topo.state.upper()}"
+                    + (f"   turn {topo.turn.upper()}" if topo.turn else ""),
+                    f"gate {status['gate_range_m']:.2f} m, "
+                    f"{topo.cursor.remaining} branch(es) left"
+                    + (f"   ({topo.note})" if topo.note else ""))
                 last_state = topo.state
 
             # The arrival is the one event this whole tool exists to produce,
@@ -857,14 +884,16 @@ def main(argv=None):
                 audio, goal_stopped=goal_latch.stopped,
                 state_changed=goal_state_changed)
             if goal_state_changed:
-                print(f"  [goal {last_goal_state} -> {goal_latch.state}] "
-                      f"{status['goal_range_m']:.2f} m"
-                      + (f", carried {goal_latch.blind_ticks} ticks"
-                         if goal_latch.blind_ticks else "")
-                      + (f"  ({goal_latch.note})" if goal_latch.note else ""))
-                if goal_latch.stopped:
-                    print("  GOAL REACHED -- release X and press it again to "
-                          "drive on.")
+                banner(
+                    ("*** GOAL REACHED ***" if goal_latch.stopped else
+                     f"GOAL {last_goal_state.upper()} -> "
+                     f"{goal_latch.state.upper()}"),
+                    f"{status['goal_range_m']:.2f} m"
+                    + (f", carried {goal_latch.blind_ticks} ticks"
+                       if goal_latch.blind_ticks else "")
+                    + (f"   ({goal_latch.note})" if goal_latch.note else "")
+                    + ("   release X and press it again to drive on"
+                       if goal_latch.stopped else ""))
                 last_goal_state = goal_latch.state
 
             if now - last_report >= 1.0:

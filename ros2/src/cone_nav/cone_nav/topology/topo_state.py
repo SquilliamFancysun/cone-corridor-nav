@@ -241,6 +241,27 @@ class TopoState(object):
         return self.state in (APPROACH, TRAVERSE)
 
     @property
+    def past_gate(self):
+        """Has the car travelled beyond the gate line it committed to?
+
+        `engaged` is what holds the dead-end detector down, because a junction
+        mouth legitimately looks like a short one-sided corridor and calling it
+        a wall would reverse the car out of a junction it was driving
+        correctly. But that excuse expires at the gate line. Past it the car is
+        inside the branch it chose, and a wall ahead is a wall -- while
+        `engaged` stays true for the rest of the traverse, which is the whole
+        clearance distance plus `CLEAR_PAST_GATE_M`.
+
+        On a stub shorter than `commit_range_m + CLEAR_PAST_GATE_M` that gap
+        swallows the entire branch: the car meets the wall still inside the
+        manoeuvre, with the detector silenced. Measured 2026-09-02, J1
+        committed at 2.71 m and so needed 3.21 m of travel against a 2.5 m
+        stub.
+        """
+        return (self.state == TRAVERSE and self.commit_range_m > 0.0
+                and self.travelled_m >= self.commit_range_m)
+
+    @property
     def junction(self):
         """The junction to act on: this tick's if seen, else the latched one."""
         return self.live if self.live is not None else self.latched
