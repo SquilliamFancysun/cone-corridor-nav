@@ -182,6 +182,35 @@ def duty(pursuit, line, max_duty=DEFAULT_MAX_DUTY, origin=(0.0, 0.0),
 MAX_REVERSE_DUTY = MIN_MOVE_DUTY
 
 
+def reverse_mps(duty=MAX_REVERSE_DUTY, duty_to_mps=DUTY_TO_MPS):
+    """What a commanded reverse duty is believed to be in metres per second.
+
+    "Believed" is doing work. `DUTY_TO_MPS` was fitted FORWARD, at one duty
+    point, on one battery and one surface, and open-loop duty is not a speed
+    command in the first place -- see the module docstring. This is the best
+    estimate available and is worth stating out loud rather than leaving
+    implied, because of what it collides with:
+
+        MAX_REVERSE_DUTY  0.05  = MIN_MOVE_DUTY, below which the motor cogs
+        DUTY_TO_MPS       7.5   -> 0.375 m/s
+        MAX_REVERSE_MPS   0.3   the speed above which the reverse gains have
+                                never been checked (`reverse_ctrl`)
+
+    **Those three cannot all be right.** There is no duty that is both above
+    the cogging floor and below the stability ceiling, so the car cannot
+    reverse at all without violating one of them. Clamping to the ceiling would
+    command 0.04 and stall the motor, which is why nothing here clamps: a
+    stalled car at a dead end is not safer than a slightly fast one, it is just
+    stuck somewhere it cannot recover from.
+
+    So the contradiction is reported instead, and `docs/junction-bringup.md`
+    stage 8b is what resolves it -- measuring reverse m/s at the floor duty
+    directly. `DUTY_TO_MPS` is much the weakest of the three and the likeliest
+    to be what is wrong.
+    """
+    return abs(duty) * duty_to_mps
+
+
 def reverse_duty(max_reverse_duty=MAX_REVERSE_DUTY):
     """The duty to command while backing up. Negative.
 

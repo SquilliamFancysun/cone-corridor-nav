@@ -61,7 +61,7 @@ import detectors
 import drive_corridor
 import fusion_view
 import oakd
-from cone_nav.control import pure_pursuit, speed_ctrl
+from cone_nav.control import pure_pursuit, reverse_ctrl, speed_ctrl
 from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
@@ -568,6 +568,26 @@ def banner(headline, detail=""):
     print(RULE + "\n")
 
 
+def reverse_speed_warning(duty):
+    """The line to print when a commanded reverse exceeds the gains' ceiling.
+
+    Empty when it does not. See `speed_ctrl.reverse_mps`: the cogging floor and
+    `reverse_ctrl.MAX_REVERSE_MPS` cannot both be satisfied, so this is a
+    standing condition to be measured out of existence at stage 8b rather than
+    a fault to be fixed by turning a number down.
+    """
+    mps = speed_ctrl.reverse_mps(duty)
+    if mps <= reverse_ctrl.MAX_REVERSE_MPS:
+        return ""
+    return (f"           duty {duty} is about {mps:.2f} m/s on a FORWARD-fitted "
+            f"DUTY_TO_MPS, over the\n"
+            f"           {reverse_ctrl.MAX_REVERSE_MPS} m/s above which the "
+            f"reverse gains have never been checked.\n"
+            f"           Nothing below the cogging floor can be commanded, so "
+            f"this stands until\n"
+            f"           stage 8b measures reverse m/s directly.")
+
+
 def announce(args):
     if args.reverse_only:
         print(RULE)
@@ -580,6 +600,9 @@ def announce(args):
               "blanks the")
         print("                 rear 142 deg. See docs/junction-bringup.md "
               "stage 8a.")
+        warning = reverse_speed_warning(args.max_reverse_duty)
+        if warning:
+            print(warning.replace("           ", "                 "))
         print(RULE + "\n")
         return
     if args.explore:
@@ -592,6 +615,9 @@ def announce(args):
                   f"power at duty {args.max_reverse_duty} -- no carry")
             print("           the car cannot see behind it. Keep the corridor "
                   "behind it clear")
+            warning = reverse_speed_warning(args.max_reverse_duty)
+            if warning:
+                print(warning)
         else:
             print("           at a wall the car stops for you to carry it "
                   "back (stage 7b)")

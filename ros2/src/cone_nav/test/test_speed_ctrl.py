@@ -18,7 +18,9 @@ from cone_nav.control.speed_ctrl import (
     duty,
     ramp,
     reach_of,
+    MAX_REVERSE_DUTY,
     reverse_duty,
+    reverse_mps,
 )
 
 WHEELBASE = 0.25
@@ -272,3 +274,31 @@ def test_the_old_forward_contract_is_unchanged():
     assert ramp(0.0, 0.10) == pytest.approx(MAX_DUTY_STEP)
     assert ramp(0.06, 0.06) == pytest.approx(0.06)
     assert ramp(0.06, 0.0) == 0.0
+
+
+def test_the_reverse_floor_and_the_gain_ceiling_contradict_each_other():
+    """Not a preference being pinned -- a contradiction being kept visible.
+
+    The cogging floor says the car cannot be commanded below 0.05 duty. The
+    forward-fitted DUTY_TO_MPS says 0.05 is 0.375 m/s. `reverse_ctrl` says the
+    reverse gains have never been checked above 0.3. So there is no duty that
+    satisfies both, and the car cannot reverse at all without violating one.
+
+    This test fails the day someone measures reverse m/s at stage 8b and puts
+    the number in -- which is exactly when it should fail, because the reverse
+    duty and the gains both want revisiting at that point. Do not silence it by
+    lowering MAX_REVERSE_DUTY below MIN_MOVE_DUTY; that commands a stalled
+    motor at a dead end, which is not the safer failure.
+    """
+    from cone_nav.control.reverse_ctrl import MAX_REVERSE_MPS
+
+    assert MAX_REVERSE_DUTY == MIN_MOVE_DUTY, "the floor moved"
+    implied = reverse_mps(MAX_REVERSE_DUTY)
+    assert implied > MAX_REVERSE_MPS, (
+        f"reverse now implies {implied:.3f} m/s, inside the {MAX_REVERSE_MPS} "
+        "m/s ceiling -- the contradiction is resolved, so re-read "
+        "speed_ctrl.reverse_mps and drive_junction.reverse_speed_warning")
+
+
+def test_reverse_mps_is_a_magnitude_whichever_sign_it_is_given():
+    assert reverse_mps(-0.05) == reverse_mps(0.05)

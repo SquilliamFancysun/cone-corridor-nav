@@ -582,7 +582,7 @@ Same command, wheels down, 2–3 m of clear floor, `--log`. What to read out:
 | | Where | Why it matters |
 |---|---|---|
 | **Does it move at 0.05 from a standstill?** | your eyes | The real question of the day. Manual reverse ran at 0.10 and usually already rolling; this is half that, from rest, on carpet or asphalt rather than a stand. Sweep `--max-reverse-duty` up until it breaks away reliably and **record what it took** — if it needs 0.08, that goes back into the gains, because `reverse_ctrl`'s loop stiffens with speed |
-| Reverse m/s | `odo_forward_m`, **negative** | The reverse half of `DUTY_TO_MPS` = 7.5, which was fitted forward-only at one duty point |
+| **Reverse m/s** | `odo_forward_m`, **negative** | Settles a live contradiction, not just a missing number. The floor duty 0.05 against a forward-fitted `DUTY_TO_MPS` of 7.5 implies **0.375 m/s**, and `reverse_ctrl.MAX_REVERSE_MPS` says the gains have never been checked above **0.3**. No duty satisfies both — nothing can be commanded under the cogging floor — so the tool says so at startup and this measurement is what resolves it. `DUTY_TO_MPS` is much the weakest of the three |
 | Does it track straight or crab? | the floor | Slop and servo trim show here and nowhere else |
 | **Does odometry survive?** | `odo_pairs` > 0 | `rigid_step` is sign-agnostic and 0.04 m/tick is well inside the 0.35 m match gate, so it should — and the manoeuvre's distance bound depends on it |
 
