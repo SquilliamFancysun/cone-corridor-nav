@@ -607,8 +607,10 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # drive_junction.drive_pipeline.
         engaged = topo is not None and topo.engaged
         past = topo is not None and topo.past_gate
+        bounds = split(cones)
         dead_end_latch.update(
-            corridor_line, cones, oranges=split(cones).dead_ends,
+            corridor_line, cones, oranges=bounds.dead_ends,
+            reds=bounds.gates, magenta=bounds.goal,
             armed=(not engaged or past) and not goal_latch.run_in,
             origin=rear_axle_in_base, travel_m=last_travel)
         if dead_end_latch.latched and not backing_out:

@@ -76,6 +76,27 @@ blocked. Three things guard it, and all three are needed:
     remains the rare state machine that can afford to be slow. What it cannot
     afford is to require a steadiness the perception does not have.
 
+## The corridor ends for three different reasons, and only one is a wall
+
+`centerline` pairs blue with yellow and nothing else, so a red or a magenta
+never becomes a midpoint. The driven line therefore ends at the last boundary
+pair before ANY of them -- and `reach` collapsing is what this module fires on.
+A junction and the goal produce the same geometric signal a wall does.
+
+The `armed` holds below cover that once the machine has RECOGNISED the junction
+or the goal. They do nothing in the window before it does, which is exactly
+where a gate that arms late sits: observed 2026-09-03, a second junction arming
+at 1.86 m and the goal both read as dead ends on the approach.
+
+So a red or a magenta standing where this corridor ends is a refusal. The scene
+already says which of the three it is -- `boundary_split` buckets all three --
+and this module was reading only one of the buckets.
+
+The asymmetry is deliberate. Refusing costs a wall named late, and the reach
+floor still stops the car at it. Accepting costs a junction aborted and a search
+unwound past a branch that was never tried, which corrupts the map and no amount
+of driving recovers.
+
 ## Where this must not run
 
 Two places where the corridor legitimately ends and the car is right to be
@@ -216,14 +237,16 @@ class DeadEndLatch(object):
         self._travel_since = 0.0
 
     def update(self, line, cones, oranges=(), armed=True, origin=(0.0, 0.0),
-               travel_m=0.0):
+               travel_m=0.0, reds=(), magenta=()):
         """One tick.
 
         `armed` is the caller holding the machine down where the corridor is
         allowed to end -- through a junction mouth and over the goal run-in.
         See the module docstring. `oranges` is `boundary_split.split().dead_ends`,
-        already range-sorted; it is corroboration only. `travel_m` is this
-        tick's measured travel, which only the re-arm floor reads.
+        already range-sorted; it is corroboration only. `reds` and `magenta`
+        are that same split's `gates` and `goal`: a corridor ending at either
+        ends for a reason that is not a wall. `travel_m` is this tick's
+        measured travel, which only the re-arm floor reads.
         """
         if self.latched:
             return self.state
@@ -244,6 +267,16 @@ class DeadEndLatch(object):
 
         wall = self._wall_ahead(oranges)
         blocked = self._refusal(line, cones, wall)
+        if not blocked:
+            # Something that is not a wall explains the corridor ending here.
+            # Checked after the geometric tests so the reason names the more
+            # specific fault when both apply. Rides the same position test the
+            # orange does, so a leftover red off to one side cannot silence a
+            # real wall beyond it.
+            if self._wall_ahead(reds):
+                blocked = "a junction ends this corridor, not a wall"
+            elif self._wall_ahead(magenta):
+                blocked = "the goal ends this corridor, not a wall"
 
         # A refused tick is counted as evidence-against rather than wiping the
         # window. That is the change: the reach flicker means a wall produces

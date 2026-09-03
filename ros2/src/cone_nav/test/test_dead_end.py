@@ -35,10 +35,12 @@ def cones(n=8):
     return [FakeCone(x=0.5 * i) for i in range(n)]
 
 
-def run(latch, ticks, line, cone_list=None, oranges=(), armed=True):
+def run(latch, ticks, line, cone_list=None, oranges=(), armed=True,
+        reds=(), magenta=()):
     cone_list = cones() if cone_list is None else cone_list
     for _ in range(ticks):
-        latch.update(line, cone_list, oranges=oranges, armed=armed)
+        latch.update(line, cone_list, oranges=oranges, armed=armed,
+                     reds=reds, magenta=magenta)
     return latch.state
 
 
@@ -328,3 +330,47 @@ def test_an_orange_cannot_rescue_a_collapsed_line():
     latch = DeadEndLatch()
     assert run(latch, 60, FakeLine(0), oranges=[FakeCone(1.0, 0.0)]) == CLEAR
     assert "collapsed" in latch.reason
+
+
+# --- the corridor ends for three reasons, and two are not a wall ---------
+
+def test_a_junction_ahead_is_not_a_wall():
+    """Observed 2026-09-03: a second junction arming at 1.86 m read as a dead
+    end on the approach. `centerline` pairs blue with yellow and nothing else,
+    so reds never form a midpoint and the driven line ends at the last boundary
+    pair before them -- the same collapse a wall produces. `engaged` holds this
+    down only AFTER the machine has recognised the junction; the window before
+    that was unguarded."""
+    latch = DeadEndLatch()
+    assert run(latch, 60, FakeLine(0.4), reds=[FakeCone(1.2, 0.0)]) == CLEAR
+    assert "junction ends this corridor" in latch.reason
+
+
+def test_the_goal_ahead_is_not_a_wall():
+    """Same geometry, same cause: magenta forms no midpoint either, and
+    `run_in` only holds once the goal latch has confirmed."""
+    latch = DeadEndLatch()
+    assert run(latch, 60, FakeLine(0.4), magenta=[FakeCone(1.0, 0.0)]) == CLEAR
+    assert "goal ends this corridor" in latch.reason
+
+
+def test_a_wall_with_nothing_else_in_the_scene_still_latches():
+    """The refusals must not swallow the case the module exists for."""
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.4),
+               oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
+
+
+def test_a_red_off_to_one_side_does_not_veto_a_wall():
+    """It rides the same position test the orange does, so a red that is not
+    where this corridor ends cannot block the call -- otherwise a leftover red
+    from the junction behind would silence every dead end beyond it."""
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)],
+               reds=[FakeCone(1.0, -2.5)]) == DEAD_END
+
+
+def test_a_junction_beyond_the_wall_range_does_not_veto():
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)],
+               reds=[FakeCone(4.0, 0.0)]) == DEAD_END
