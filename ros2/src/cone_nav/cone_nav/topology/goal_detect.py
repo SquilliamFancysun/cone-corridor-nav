@@ -176,13 +176,24 @@ def trusted_axis(corridor_line, axis_rad):
 
 
 def survey(cones, axis_rad=0.0, arm_range_m=GOAL_ARM_RANGE_M,
-           max_offset_m=MAX_OFFSET_M):
+           max_offset_m=MAX_OFFSET_M, candidates=None):
     """LabeledCones -> GoalSurvey: the goal if there is one, and why if not.
 
     Never raises and never returns None. A tick with no magenta in it is a normal
     tick on a corridor, and nearly every tick of any run is that.
+
+    `candidates` replaces the magenta bucket with any other one, which is the
+    only colour-specific thing this function ever did. It exists so a dead-end
+    wall can be approached the way the trophy is: a single cone, on the corridor
+    axis, inside an arm range, driven at and stopped short of. Everything below
+    -- the refusal to guess between two, the offset test, the reasons -- is
+    about a cone standing at the end of a corridor, and says nothing about what
+    colour it is.
+
+    `GoalLatch` needs no such change: it tracks a point and never asks what the
+    point is.
     """
-    magenta = split(cones).goal
+    magenta = split(cones).goal if candidates is None else list(candidates)
     in_arm = [c for c in magenta if math.hypot(c.x, c.y) <= arm_range_m]
 
     goal, offset, reason = None, None, ""

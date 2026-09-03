@@ -374,3 +374,36 @@ def test_a_junction_beyond_the_wall_range_does_not_veto():
     latch = DeadEndLatch()
     assert run(latch, 6, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)],
                reds=[FakeCone(4.0, 0.0)]) == DEAD_END
+
+
+def test_a_wall_can_be_named_by_arriving_at_it():
+    """The orange run-in reaches a cone and stops a known distance short. That
+    is a dead end established by ARRIVAL, and a better measurement than
+    inferring one from a corridor that ran out -- so it feeds the same latch,
+    and everything downstream is identical."""
+    latch = DeadEndLatch()
+    assert not latch.latched
+    latch.force("drove up to the wall, stopped 0.28 m short (orange run-in)")
+    assert latch.latched
+    assert "drove up to the wall" in latch.reason
+
+
+def test_which_signal_arrived_first_is_recoverable_from_the_reason():
+    """Two paths reach the same state, and a run read back later has to say
+    which -- one is a measurement, the other an inference."""
+    arrived = DeadEndLatch()
+    arrived.force("drove up to the wall, stopped 0.28 m short (orange run-in)")
+
+    inferred = DeadEndLatch()
+    run(inferred, 6, FakeLine(0.4), oranges=[FakeCone(1.0, 0.0)])
+
+    assert arrived.latched and inferred.latched
+    assert "run-in" in arrived.reason
+    assert "corridor ends" in inferred.reason
+
+
+def test_a_forced_latch_is_released_like_any_other():
+    latch = DeadEndLatch()
+    latch.force("drove up to the wall")
+    latch.release()
+    assert latch.state == CLEAR

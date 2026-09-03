@@ -25,6 +25,7 @@ from cone_nav.topology.goal_detect import (
 from cone_perception.cone_classes import (
     CLASS_BLUE,
     CLASS_MAGENTA,
+    CLASS_ORANGE,
     CLASS_RED,
     CLASS_YELLOW,
 )
@@ -218,3 +219,37 @@ def test_the_bearing_is_reported_beside_the_offset():
     assert got.reason == OFF_AXIS
     assert got.offset_m == pytest.approx(-1.73, abs=0.01)
     assert got.bearing_deg == pytest.approx(0.0, abs=0.01)
+
+
+# --- the same tests, aimed at another colour ----------------------------
+
+def test_the_survey_can_be_pointed_at_another_bucket():
+    """A dead-end wall is the same shape of problem as the trophy: one cone, on
+    the corridor axis, inside an arm range. `candidates` is the only
+    colour-specific thing survey ever did."""
+    wall = cone(2.0, 0.0, CLASS_ORANGE)
+    out = survey([wall], candidates=[wall])
+    assert out.goal is wall
+    assert out.reason == ""
+
+
+def test_pointing_it_elsewhere_keeps_every_refusal():
+    """The refusals are about a cone at the end of a corridor, not about
+    magenta, so they have to survive the substitution unchanged."""
+    near, far = cone(2.0, 0.0, CLASS_ORANGE), cone(2.2, 0.3, CLASS_ORANGE)
+    assert survey([], candidates=[near, far]).goal is None
+    assert survey([], candidates=[near, far]).reason == MULTIPLE
+
+    off = cone(2.0, 1.2, CLASS_ORANGE)
+    assert survey([], candidates=[off]).goal is None
+    assert survey([], candidates=[off]).reason == OFF_AXIS
+
+    beyond = cone(4.0, 0.0, CLASS_ORANGE)
+    assert survey([], candidates=[beyond]).goal is None
+    assert survey([], candidates=[beyond]).reason == DISTANCE
+
+
+def test_the_magenta_bucket_is_still_the_default():
+    """Passing nothing must behave exactly as before."""
+    trophy = cone(2.0, 0.0, CLASS_MAGENTA)
+    assert survey([trophy]).goal is trophy

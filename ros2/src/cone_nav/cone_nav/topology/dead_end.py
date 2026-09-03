@@ -223,6 +223,25 @@ class DeadEndLatch(object):
     def latched(self):
         return self.state == DEAD_END
 
+    def force(self, reason):
+        """Latch on evidence this machine did not gather itself.
+
+        The wall run-in -- `goal_stop.GoalLatch` aimed at the orange -- arrives
+        at a cone and stops a known distance short of it. That is a dead end
+        established by ARRIVAL rather than inferred from a corridor running
+        out, and it is a better measurement than anything here produces. It
+        feeds the same latch so that everything downstream is identical: the
+        search unwinds, the map records a wall, the banner prints, and nothing
+        can tell which signal got there first.
+
+        Kept separate from `update` so the geometric path cannot be confused
+        with the positive one when a run is read back -- `reason` says which
+        arrived.
+        """
+        self.state = DEAD_END
+        self.reason = reason
+        return self.state
+
     def release(self):
         """Clear the latch. The deadman's rising edge, same as `GoalLatch`.
 

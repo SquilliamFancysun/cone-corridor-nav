@@ -122,6 +122,9 @@ JUNCTION_STATUS_SCHEMA = {
         pose_jumps={"type": "integer", "description": "declared lifts. Anything measured across one is in a different frame and comes back unmeasured"},
         boxes={"type": "string", "description": "this tick's CAMERA boxes as class,bearing_deg,confidence;... -- the inputs fusion chose between. cones_xy records what it decided; without these a cluster that came back the wrong colour cannot be diagnosed"},
         cones_xy={"type": "string", "description": "this tick's cones in base_link as x,y,class;... -- what analysis/map_from_log.py turns into a map. Pre-fill and pre-branch-filter, the same list the odometry is fitted on"},
+        wall_state={"type": "string", "description": "the orange run-in: seeking / run_in / stopped. A dead end named by ARRIVAL rather than by the corridor running out"},
+        wall_range_m={"type": "number", "description": "to the wall cone, measured if seen this tick else carried"},
+        wall_reason={"type": "string", "description": "why no wall cone was accepted -- the same reasons goal_reason gives, aimed at orange"},
         dead_end_state={"type": "string", "description": "clear / dead_end"},
         dead_end_reason={"type": "string", "description": "why the corridor is or is not judged to have ended. The first field to read when a backtrack fires or fails to"},
         dead_end_reach_m={"type": "number", "description": "reach of the UNANCHORED corridor line, which is what the decision is made on"},
@@ -168,7 +171,7 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                    axis_rad=0.0, topo=None, previous_line=None,
                    travel_m=0.0, yaw_delta_rad=0.0, red_memory=None,
                    goal_latch=None, goal_armed=False, dead_end_latch=None,
-                   backing_out=False):
+                   backing_out=False, wall_latch=None):
     """One revolution -> cones, centerline, steering, duty, plus the manoeuvre.
 
     Identical to `drive_corridor.drive_pipeline` up to the fill and after the
@@ -260,6 +263,11 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     # frame the car has driven out of.
     if topo is not None and topo.anchor_ok:
         line = junction_exec.junction_line(corridor_line, topo.anchor_xy)
+    # The wall gets the same anchor the trophy does, and for the same reason:
+    # an orange forms no midpoint, so without one the driven line stops at the
+    # last boundary pair and the cone the car is closing on is not on its path.
+    if wall_latch is not None and wall_latch.anchor_ok:
+        line = junction_exec.junction_line(line, wall_latch.goal_xy)
     if goal_latch is not None and goal_latch.anchor_ok:
         # The same helper as the gate anchor, for the same reason: a magenta
         # cone forms no midpoints, so without this the line stops at the last
@@ -273,7 +281,11 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     # nothing else. Left in place they halt the car ~0.64 m from the trophy --
     # before any stop range can fire, and unrecoverably, because the scan does
     # not change while the car stands still. See cone_nav/guidance/goal_stop.py.
-    run_in = goal_latch is not None and goal_latch.run_in
+    # Either run-in relaxes the speed law. Both are a confirmed, lidar-ranged
+    # point being closed on with no corridor left to commit to, which is the
+    # whole of `goal_stop`'s argument for standing the floor down.
+    run_in = ((goal_latch is not None and goal_latch.run_in)
+              or (wall_latch is not None and wall_latch.run_in))
     # The reach floor stands down in exactly two places, and this is the second.
     #
     # Inside a TRAVERSE the car has already committed: the gate is latched, the
@@ -300,6 +312,27 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                            min_reach_m=(0.0 if run_in or in_mouth
                                         else speed_ctrl.MIN_REACH_M),
                            min_points=1 if run_in else 2)
+    # The wall, approached the way the trophy is. Neither `goal_detect.survey`
+    # nor `GoalLatch` is about magenta -- one takes the bucket as an argument
+    # now, and the other only ever tracked a point. What they give a dead end is
+    # a POSITIVE signal with a known stop distance, in place of inferring a wall
+    # from a corridor that ran out.
+    #
+    # It does NOT replace the geometric latch below. Orange is the weakest class
+    # in the dataset -- 0.687 recall on v3 -- and a wall whose cone is missed
+    # must still be named, or the operator gets a stopped car that decided
+    # nothing: no dead_end(), no map entry, no banner. Measured across four
+    # runs, the geometric signal fired 9-20 of 20 ticks at a wall and 0 of 20 in
+    # a corridor, which is a sound thing to fall back on.
+    wall_survey = None
+    if wall_latch is not None:
+        wall_survey = goal_detect.survey(
+            cones, axis_rad=goal_detect.trusted_axis(previous_line, axis_rad),
+            candidates=split(cones).dead_ends)
+        wall_latch.update(wall_survey.goal,
+                          armed=not engaged and not backing_out,
+                          travel_m=travel_m, yaw_delta_rad=yaw_delta_rad)
+
     if dead_end_latch is not None:
         # On the UNANCHORED line: an anchor is a point threaded onto the driven
         # line, so judging reach from `line` would credit the corridor with a
@@ -315,11 +348,12 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
             armed=(not engaged or past) and not run_in and not backing_out,
             origin=axle, travel_m=travel_m)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
-            junction, dropped, survey, remembered, goal_survey)
+            junction, dropped, survey, remembered, goal_survey, wall_survey)
 
 
 def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
               goal_latch=None, goal_armed=False, dead_end_latch=None,
+              wall_latch=None, wall_survey=None,
               pose=None, maze=None, backout=None):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
@@ -370,6 +404,10 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         # `goal_reason`: a corridor that reaches too far, a car with nothing in
         # view and a wall are different states, and `dead_end_state` shows none
         # of them.
+        wall_state=wall_latch.state if wall_latch else "",
+        wall_range_m=(round(wall_latch.range_m, 3)
+                      if wall_latch and wall_latch.range_m is not None else 0.0),
+        wall_reason=wall_survey.reason if wall_survey else "",
         dead_end_state=dead_end_latch.state if dead_end_latch else "",
         dead_end_reason=dead_end_latch.reason if dead_end_latch else "",
         dead_end_reach_m=(round(dead_end_latch.reach_m, 3)
@@ -444,6 +482,13 @@ def parse_args(argv=None):
                              "at which the magenta goal stops the run. The "
                              "floor is clustering.MIN_CONE_RANGE_M (0.20), "
                              "below which the trophy stops being a cluster")
+    parser.add_argument("--wall-stop", type=float,
+                        default=goal_stop.STOP_RANGE_M,
+                        help="metres from the lidar at which the car stops "
+                             "short of a dead-end wall it has driven up to. "
+                             "Same default as --goal-stop; raise it if the "
+                             "car ends up crowded among the wall cones with "
+                             "no room to back out")
     parser.add_argument("--goal-anywhere", action="store_true",
                         help="arm the goal stop even while the route still has "
                              "turns left. FOR BRING-UP on a corridor with no "
@@ -492,6 +537,13 @@ def parse_args(argv=None):
 
     if not 0.0 <= args.audio_volume <= 1.0:
         parser.error("--audio-volume must be between 0.0 and 1.0")
+
+    if args.wall_stop < clustering.MIN_CONE_RANGE_M:
+        parser.error(
+            f"--wall-stop {args.wall_stop} is inside "
+            f"{clustering.MIN_CONE_RANGE_M} m, where a return is discarded as "
+            "the chassis arc leaking and\n       the wall cone stops being a "
+            "cluster at all.")
 
     if args.goal_stop < clustering.MIN_CONE_RANGE_M:
         parser.error(
@@ -728,6 +780,9 @@ def main(argv=None):
     red_memory = label_memory.RedMemory()
     goal_latch = goal_stop.GoalLatch(stop_range_m=args.goal_stop)
     dead_end_latch = dead_end.DeadEndLatch()
+    # The same latch the trophy uses, aimed at the orange. It never asks what
+    # colour the point is; `goal_detect.survey(candidates=...)` decides that.
+    wall_latch = goal_stop.GoalLatch(stop_range_m=args.wall_stop)
     backout = (backout_mod.BackoutManoeuvre(
         max_reverse_duty=args.max_reverse_duty) if args.reverse else None)
     # `topo.commit_range_m` is zeroed by `_reset` the instant a gate is called
@@ -765,6 +820,7 @@ def main(argv=None):
     last_goal_state = goal_latch.state
     was_armed = False
     was_dead_end = False
+    was_at_wall = False
     was_at_goal = False
     driven_turns = []
     loops = 0
@@ -832,6 +888,7 @@ def main(argv=None):
                 # Then the odometry landmarks, the corridor line `topo_state`
                 # reads next tick, and the steering median.
                 axis_rad = 0.0
+                wall_latch.release()
                 red_memory.forget()
                 previous_cones = None
                 previous_line = None
@@ -883,12 +940,12 @@ def main(argv=None):
                 goal_armed = False
             (result, cones, filled, line, pursuit, duty, corridor_line,
              junction, dropped, survey, remembered,
-             goal_survey) = drive_pipeline(
+             goal_survey, wall_survey) = drive_pipeline(
                 scan, detection_set, record, intr, args, now, axis_rad,
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
                 yaw_delta_rad=yaw_delta_rad, red_memory=red_memory,
                 goal_latch=goal_latch, goal_armed=goal_armed,
-                dead_end_latch=dead_end_latch, backing_out=backing_out)
+                dead_end_latch=dead_end_latch, wall_latch=wall_latch, backing_out=backing_out)
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
@@ -917,6 +974,17 @@ def main(argv=None):
                 maze.record_pass(path_before, turn_before, length_m=(
                     odometry.distance_between(last_node_pose, pose.snapshot())))
                 last_node_pose = pose.snapshot()
+
+            # A completed wall run-in is a dead end, named by arrival rather
+            # than by the corridor running out. It feeds the same event, so
+            # everything downstream -- the search, the map, the banner -- is
+            # unchanged and cannot tell which signal got there first.
+            wall_reached = wall_latch.stopped and not was_at_wall
+            was_at_wall = wall_latch.stopped
+            if wall_reached and not dead_end_latch.latched:
+                dead_end_latch.force(
+                    f"drove up to the wall, stopped "
+                    f"{wall_latch.range_m:.2f} m short (orange run-in)")
 
             if dead_end_latch.latched and not was_dead_end:
                 maze.record_dead_end(topo.cursor.path)
@@ -1055,6 +1123,7 @@ def main(argv=None):
                 commanded=steer)
             status = status_of(base, topo, junction, dropped, survey,
                                dead_end_latch=dead_end_latch, pose=pose,
+                               wall_latch=wall_latch, wall_survey=wall_survey,
                                maze=maze, backout=backout,
                                goal_survey=goal_survey, goal_latch=goal_latch,
                                goal_armed=goal_armed)
@@ -1179,9 +1248,17 @@ def main(argv=None):
                 # mouth" from "the pairing collapsed" is to pull the log --
                 # which is no use to someone watching a car drive at a wall.
                 # Suppressed once latched: `stop_reason` already says that.
-                wall = ("" if dead_end_latch.latched
-                        else f"  wall? [{dead_end_latch.reason}]"
-                        if dead_end_latch.reason else "")
+                # The run-in first when it is live: "closing on the wall at
+                # 0.74 m" is a different thing to know than why the geometric
+                # signal has not fired, and it is the one that is about to act.
+                if dead_end_latch.latched:
+                    wall = ""
+                elif wall_latch.state != goal_stop.SEEKING:
+                    wall = (f"  WALL {wall_latch.state} "
+                            f"{status['wall_range_m']:.2f} m")
+                else:
+                    wall = (f"  wall? [{dead_end_latch.reason}]"
+                            if dead_end_latch.reason else "")
                 print(f"  {flag} duty {duty_now:.3f}  steer "
                       f"{status['steer_deg']:+6.1f} deg  "
                       f"{len(line.points)} pts, reach {duty.reach_m:.2f} m  "
