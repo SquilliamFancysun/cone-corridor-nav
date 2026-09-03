@@ -28,8 +28,8 @@ anything is allowed to move. Do not skip to stage 5 because the sim is green.
 ## Stage 0 — at the desk
 
 ```sh
-uv run --with pytest --with numpy python -m pytest -q      # 373 pass
-uv run --with pytest --with numpy python -m pytest sim -q  # 34 pass, 3 known fails
+uv run --with pytest --with numpy python -m pytest -q      # 712 pass
+uv run --with pytest --with numpy python -m pytest sim -q  # 76 pass, 3 known fails
 
 PYTHONPATH=ros2/src/cone_perception:ros2/src/cone_nav:model/capture:. \
   uv run --with numpy python -m sim.drive_sim \
@@ -323,11 +323,14 @@ the car would be stopping on a goal it can no longer see.
 
 Everything above drives a route someone wrote. `--explore` takes the route away:
 the car picks a branch at each junction, and when the branch ends in a wall it
-backs the search out and takes the other one. It cannot back the CAR out yet —
-there is no reverse in the tool — so you are the reverse. That is not a
-workaround bolted on; the decision layer is finished either way, and the map,
-the plan and the emitted route are identical to what a self-reversing car
-produces.
+backs the search out and takes the other one. Here **you are the reverse** —
+the car stops at the wall and you carry it back. That is not a workaround
+bolted on; the decision layer is finished either way, and the map, the plan and
+the emitted route are identical to what a self-reversing car produces.
+
+Stage 8 takes the carry out. This stage stays the fallback, and stays the way
+to bring up a track before trusting a reverse on it: `--reverse` is off unless
+you pass it.
 
 ```sh
 ~/env/bin/python drive_junction.py --weights ~/models/best.pt --explore \
@@ -502,6 +505,153 @@ out; see `speed_ctrl.duty`'s `min_reach_m`.
 | Route emitted with a phantom turn | `maze_nodes` vs junctions driven | A junction recorded twice — the backtrack re-entry was not matched to the same node |
 | `no route written` | `goal_state` | The run ended without finding the goal, so there was nothing to plan |
 
+## Stage 8 — the car as its own reverse
+
+Stage 7 ends with you carrying the car back to the junction. This is the same
+search with that carry taken out: at a wall the car backs ITSELF down the
+branch, recognises the junction from the parent side, and drives through it on
+the branch it has not tried.
+
+```sh
+~/env/bin/python drive_junction.py --weights ~/models/best.pt --explore \
+    --reverse --invert-steering --max-range 3.5 --lookahead 0.8 \
+    --max-duty 0.05 --emit-route routes/optimal.txt --log explore-rev-1.jsonl
+```
+
+**`--reverse` is off by default, and it requires `--explore`.** With it
+off every path is stage 7b's, unchanged — which is what makes it safe to deploy
+this branch and still demo the 2026-09-02 run from it. There is no clone on the
+car to switch back with.
+
+### The thing nobody has checked
+
+**No negative duty has ever been sent to this VESC.** `speed_ctrl.reverse_duty`
+returns one and `VescDriver`'s clamp is symmetric so it will pass through, but
+whether this VESC's configuration reverses on it — rather than braking,
+ignoring it, or wanting a zero-then-reverse sequence — is unknown. 8a is that
+question and it needs neither daylight nor a track. Do it before anything else.
+
+### The rule for the whole day
+
+**The car cannot see what it is reversing into.** The chassis fills the rear
+142° (measured, `hardware-baseline.md`), leaving the forward ~218°. The only
+guarantee about the ground behind the car is that it drove over it forward a
+moment ago — void the instant anything moves, your own feet included. So:
+reverse at the cogging floor, keep the corridor behind the car clear, keep a
+hand on X, and note that every reverse carries a hard distance bound.
+
+### 8a — does the VESC reverse at all? *(bench, wheels off the ground)*
+
+```sh
+python drive_junction.py --weights ~/models/best.pt --explore --reverse-only
+```
+
+Commands `reverse_duty()` while X is held and nothing else — through the real
+`VescDriver`, not a bespoke script, so the symmetric clamp is exercised
+honestly. It announces itself loudly and refuses to be combined with
+`--dry-run` or `--steer-only`.
+
+Confirm the wheels turn **backwards**, that 0.05 duty turns them at all, and
+that releasing X stops them. If the VESC will not take a negative duty, stop:
+that is a VESC configuration question and everything below is void without it.
+
+`--max-reverse-duty` sweeps the magnitude without editing code. It warns above
+twice the cogging floor and refuses a negative — the sign belongs to
+`speed_ctrl.reverse_duty` and nowhere else.
+
+### 8b — straight-line reverse *(floor, no cones)*
+
+Same command, wheels down, 2–3 m of clear floor, `--log`. What to read out:
+
+| | Where | Why it matters |
+|---|---|---|
+| Does it move at 0.05 at all? | your eyes | Static friction in reverse is not the forward figure. If not, raise `--max-reverse-duty` and record what it took |
+| Reverse m/s | `odo_forward_m`, **negative** | The reverse half of `DUTY_TO_MPS` = 7.5, which was fitted forward-only at one duty point |
+| Does it track straight or crab? | the floor | Slop and servo trim show here and nowhere else |
+| **Does odometry survive?** | `odo_pairs` > 0 | `rigid_step` is sign-agnostic and 0.04 m/tick is well inside the 0.35 m match gate, so it should — and the manoeuvre's distance bound depends on it |
+
+### 8c — reverse steering sign *(stand, wheels off the ground)*
+
+Stage 4's test in the other direction, and the one failure `reverse_ctrl` has
+actually had. **The folk rule is half wrong**: backing up, the cross-track term
+keeps its sign and only the heading term flips. Negating the whole law gives a
+controller that corrects heading, fights position, and drives the car off the
+centreline while its heading trace looks healthy.
+
+With the corridor in view, read `backout_heading_err_deg` and
+`backout_cross_track_m` off the log and check the wheels move the way
+`reverse_ctrl`'s docstring says they should. Decide it here, never on the track.
+
+### 8d — closed-loop reverse down a straight corridor
+
+Isolates the controller from the manoeuvre. Car at the end of a straight
+corridor facing down it; let `reverse_ctrl` regulate on what it can see ahead
+for 2–3 m.
+
+**Expect to re-tune here.** `K_HEADING`/`K_CROSS` = 2.4/0.3 were settled in sim
+on 2026-09-02 and nothing has measured them on a car. The sweep that produced
+them is in `reverse_ctrl`'s comments and is worth reading first: neighbouring
+gain cells FAIL, so this is a working point on a marginal system rather than a
+broad optimum. The failure mode is a clean-looking second followed by a spin —
+watch `backout_cross_track_m` and `backout_heading_err_deg`, and note which one
+was growing.
+
+### 8e — the manoeuvre at the relaid junction
+
+**Relay the track, then repeat stages 1 and 3 before anything moves.** New
+geometry means new numbers: rebuild to `junction_v2.md`, do the static,
+motionless gate-visibility check, and take the gaps from `gate_gaps_m` rather
+than off the tape. Nothing downstream survives a junction the car cannot see,
+and the whole manoeuvre ends on a gate sighting.
+
+Then the walled branch at `--max-duty 0.05`, hand on X. Expect:
+
+```
+DEAD END      corridor ends 0.9 m ahead (orange wall seen)
+              backing out N.NN m at most, to take RIGHT
+BACKED OUT    now taking RIGHT
+```
+
+Release X for anything you did not expect. A release mid-reverse **abandons**
+the manoeuvre rather than pausing it, and the run falls back to stage 7b's
+carry — X keeps one meaning.
+
+### 8f — full exploring run, hands off
+
+Stage 7b with nobody touching the car.
+
+### Reading the log
+
+`backout_state` is the field to read first when a run ends somewhere odd.
+
+| `backout_state` | Means | Where to look |
+|---|---|---|
+| `arrived` | Worked. `backout_gate_m` says where it stopped | Compare against the band stage 3 measured — 2.12–2.68 m on a v2 junction |
+| `abandoned`, "without seeing the junction" | Reversed its whole bound and never recovered a triple | Stage 3's static check, on the parent side. The car cannot stop at a junction it cannot see |
+| `abandoned`, "no corridor to steer on" | Blind for five ticks. It stops rather than reversing straight | Cone spacing behind the wall; the corridor it regulates on is the one AHEAD |
+| `abandoned`, "released mid-reverse" | You let go of X | Nothing |
+| `abandoned`, "timed out" | 20 s | The car is not moving. Back to 8a/8b |
+
+`backout_travelled_m` against `backout_bound_m` is the other number worth a
+glance. In sim the manoeuvre uses 74–78% of its bound; a run that finishes near
+100% found the gate by luck and the next one will not.
+
+### What it did in sim, 2026-09-02
+
+Both mirror layouts of `junction-*-blocked`, rear 142° masked, gains 2.4/0.3.
+**This is a simulation and no part of it has met a car.**
+
+| | LEFT-blocked | RIGHT-blocked |
+|---|---|---|
+| outcome | goal reached | goal reached |
+| path taken | left → wall → **right** | right → wall → **left** |
+| backout | 104 ticks / 10.4 s | 110 ticks / 11.0 s |
+| reversed | 3.83 m of a 5.18 m bound (74%) | 4.06 m of 5.18 m (78%) |
+| stopped at | 2.16 m from the gate, 2 sightings | 2.31 m, 2 sightings |
+| cross-track | mean 0.036 m, peak 0.17 m | mean 0.053 m, peak 0.34 m |
+| heading error | mean 3.2°, peak 32.2° | mean 3.9°, peak 23.3° |
+| cones struck | none | none |
+
 ## What to bring back
 
 - `junction-see.jsonl` per direction, and `junction-run-N.jsonl` per driven run,
@@ -516,6 +666,13 @@ out; see `speed_ctrl.duty`'s `min_reach_m`.
 - the measured gate gaps, from `gate_gaps_m` rather than the tape
 - the photograph of the built junction
 - whether `--invert-steering` was needed
+- **reverse m/s at the floor duty, and whether 0.05 moved the car at all**
+- straight-line reverse drift over 2 m, and `odo_pairs` through a reverse
+- the gains 8d settled, against the sim's 2.4/0.3
+- each backout's `backout_state` and reason, its `backout_travelled_m` against
+  its bound, and the `backout_gate_m` it stopped on
+- cross-track through each reverse, and which error was growing when one drifted
+- whether any backout needed the stage 7b carry after all
 - points-per-cluster on the trophy at 1, 2 and 3 m (stage 6a)
 - where the car actually stopped against `--goal-stop`, and the
   `goal_blind_ticks` it arrived with

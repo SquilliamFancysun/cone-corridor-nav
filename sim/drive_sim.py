@@ -855,6 +855,14 @@ def main(argv=None):
                         choices=["left", "right"],
                         help="which branch --explore tries first (default: "
                              "left)")
+    parser.add_argument("--reverse", action="store_true",
+                        help="back the car out of a dead end instead of ending "
+                             "the run there, and carry on with the branch it "
+                             "has not tried. Needs --explore")
+    parser.add_argument("--blind-rear", action="store_true",
+                        help="mask the arc the car's own body fills -- the rear "
+                             "142 deg, measured. Implied by --reverse, which is "
+                             "the direction it matters in")
     parser.add_argument("--goal-anywhere", action="store_true",
                         help="arm the goal even while the route has turns left")
     parser.add_argument("--no-plot", action="store_true")
@@ -896,6 +904,10 @@ def main(argv=None):
                   f"{res.max_abs_steer_deg:>5.1f}d")
         return 0
 
+    if args.reverse and not args.explore:
+        parser.error("--reverse backs out to take the branch the search has "
+                     "not tried, which only --explore decides.")
+
     result = simulate(layout, args.wheelbase, axle, lookahead_m=args.lookahead,
                       max_duty=args.max_duty, max_time_s=args.max_time,
                       dropout=dropout, seed=args.seed,
@@ -905,7 +917,12 @@ def main(argv=None):
                       cursor=(ExplorePolicy(first=args.explore_first)
                               if args.explore else None),
                       goal_stop_m=args.goal_stop,
-                      goal_anywhere=args.goal_anywhere)
+                      goal_anywhere=args.goal_anywhere,
+                      reverse=args.reverse,
+                      # Reversing against a 360 deg lidar the car does not have
+                      # is optimistic in exactly the direction that matters, so
+                      # asking for the manoeuvre asks for the mask too.
+                      blind_rear=args.blind_rear or args.reverse)
     print(f"track {args.track}, {len(layout)} cones, "
           f"lookahead {args.lookahead} m, max duty {args.max_duty}\n")
     print(summarise(result))
