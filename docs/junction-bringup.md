@@ -523,13 +523,28 @@ off every path is stage 7b's, unchanged — which is what makes it safe to deplo
 this branch and still demo the 2026-09-02 run from it. There is no clone on the
 car to switch back with.
 
-### The thing nobody has checked
+### What the DonkeyCar reverse already tells you
 
-**No negative duty has ever been sent to this VESC.** `speed_ctrl.reverse_duty`
-returns one and `VescDriver`'s clamp is symmetric so it will pass through, but
-whether this VESC's configuration reverses on it — rather than braking,
-ignoring it, or wanting a zero-then-reverse sequence — is unknown. 8a is that
-question and it needs neither daylight nor a track. Do it before anything else.
+**This VESC has taken a negative duty before, under manual control.** DonkeyCar's
+VESC part sends `set_duty_cycle(throttle * VESC_MAX_SPEED_PERCENT)` and joystick
+throttle is −1..1, so pulling the stick back is a negative duty over the same
+pyvesc link `VescDriver.drive` uses — the relationship `drive_corridor.VescDriver`
+already documents as `duty = throttle * 0.2`. So "does it reverse at all" is
+answered, and 8a is a confirmation rather than a gate.
+
+Three things it does **not** answer, and the first is where the day is most
+likely to stall:
+
+- **Magnitude.** DonkeyCar reverse ran at up to `0.5 × 0.2 = 0.10` duty. The
+  manoeuvre commands **0.05**, the cogging floor. Reversing under a thumb at
+  0.10 is no evidence at all about 0.05. That is 8b.
+- **From rest.** Manual reverse is usually already rolling, or rocked through
+  zero. The manoeuvre starts from a dead stop at a wall. `speed_ctrl.ramp`
+  pivots through zero rather than sliding across it, and `VESC_HAS_SENSOR` is
+  true so startup is sensored — the case that starts best at low duty — but
+  nothing has tried it.
+- **Which car.** None of it transfers if that reverse was a different vehicle
+  or a PWM/ESC drivetrain rather than `DRIVE_TRAIN_TYPE = "VESC"`.
 
 ### The rule for the whole day
 
@@ -540,7 +555,7 @@ moment ago — void the instant anything moves, your own feet included. So:
 reverse at the cogging floor, keep the corridor behind the car clear, keep a
 hand on X, and note that every reverse carries a hard distance bound.
 
-### 8a — does the VESC reverse at all? *(bench, wheels off the ground)*
+### 8a — confirm the reverse path *(bench, wheels off the ground)*
 
 ```sh
 python drive_junction.py --weights ~/models/best.pt --explore --reverse-only
@@ -552,8 +567,9 @@ honestly. It announces itself loudly and refuses to be combined with
 `--dry-run` or `--steer-only`.
 
 Confirm the wheels turn **backwards**, that 0.05 duty turns them at all, and
-that releasing X stops them. If the VESC will not take a negative duty, stop:
-that is a VESC configuration question and everything below is void without it.
+that releasing X stops them. Unloaded on a stand this should just work, given
+the manual reverse above; if it does not, the fault is in this tool's path
+rather than in the VESC, and the log is the place to look.
 
 `--max-reverse-duty` sweeps the magnitude without editing code. It warns above
 twice the cogging floor and refuses a negative — the sign belongs to
@@ -565,7 +581,7 @@ Same command, wheels down, 2–3 m of clear floor, `--log`. What to read out:
 
 | | Where | Why it matters |
 |---|---|---|
-| Does it move at 0.05 at all? | your eyes | Static friction in reverse is not the forward figure. If not, raise `--max-reverse-duty` and record what it took |
+| **Does it move at 0.05 from a standstill?** | your eyes | The real question of the day. Manual reverse ran at 0.10 and usually already rolling; this is half that, from rest, on carpet or asphalt rather than a stand. Sweep `--max-reverse-duty` up until it breaks away reliably and **record what it took** — if it needs 0.08, that goes back into the gains, because `reverse_ctrl`'s loop stiffens with speed |
 | Reverse m/s | `odo_forward_m`, **negative** | The reverse half of `DUTY_TO_MPS` = 7.5, which was fitted forward-only at one duty point |
 | Does it track straight or crab? | the floor | Slop and servo trim show here and nowhere else |
 | **Does odometry survive?** | `odo_pairs` > 0 | `rigid_step` is sign-agnostic and 0.04 m/tick is well inside the 0.35 m match gate, so it should — and the manoeuvre's distance bound depends on it |

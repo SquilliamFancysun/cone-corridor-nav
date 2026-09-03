@@ -170,6 +170,15 @@ def duty(pursuit, line, max_duty=DEFAULT_MAX_DUTY, origin=(0.0, 0.0),
 # lidar behind it (the chassis blocks 142 deg aft, measured), so the car is
 # driving over ground it has to REMEMBER is clear rather than see is clear --
 # and `reverse_ctrl`'s loop stiffens with speed on gains nothing has measured.
+#
+# Whether the car MOVES here is the open question, and it is a different one
+# from whether the VESC accepts a negative duty. It does: DonkeyCar has driven
+# this car backwards under manual control, which is the same
+# `set_duty_cycle(throttle * VESC_MAX_SPEED_PERCENT)` call. But that ran at up
+# to 0.10 and usually already rolling, and this is half of it from a dead stop.
+# `docs/junction-bringup.md` stage 8b sweeps it; if the car needs more than the
+# floor to break away in reverse, that number belongs here and the reverse
+# gains want re-checking against it.
 MAX_REVERSE_DUTY = MIN_MOVE_DUTY
 
 
