@@ -57,6 +57,7 @@ wrapper over it, so the diagnosis in the trial log is produced by the same code
 path as the decision and cannot drift away from it.
 """
 
+import itertools
 import math
 
 from cone_nav.corridor.boundary_split import split
@@ -204,6 +205,42 @@ def fit_axis(cones, default_rad=0.0):
     return math.atan2(math.sin(normal_rad), math.cos(normal_rad))
 
 
+def _nearest_gate(reds, axis_rad, min_gap_m, max_gap_m):
+    """The nearest three of `reds` that form a gate, or None.
+
+    Applies the SAME two tests `survey` applies to an exact triple -- both gaps
+    inside the pair window, and collinear within `MAX_LINE_OFFSET_M` -- to every
+    combination, and returns the nearest survivor. Neither test is relaxed: a
+    mixed trio drawn from two junctions fails collinearity exactly as it did
+    before, which is what makes searching safe rather than merely permissive.
+
+    Nearest by the centre cone, because that is the cone the car steers around
+    and the one `junction_exec` uses as the divider. A gate further down the
+    course is a gate for later; acting on it now would filter the branches of a
+    junction the car has not reached.
+
+    Combinatorially trivial at any real red count -- six reds is twenty trios --
+    and `GATE_ARM_RANGE_M` bounds how many can ever be in play.
+    """
+    best, best_range = None, float("inf")
+    for trio in itertools.combinations(reds, 3):
+        fitted = fit_axis(trio, default_rad=axis_rad)
+        left, centre, right = sorted(trio, key=lambda c: _offset(c, fitted),
+                                     reverse=True)
+        gaps = (_distance(left, centre), _distance(centre, right))
+        if not all(min_gap_m <= g <= max_gap_m for g in gaps):
+            continue
+        along = [(c.x - centre.x) * math.cos(fitted)
+                 + (c.y - centre.y) * math.sin(fitted)
+                 for c in (left, centre, right)]
+        if max(abs(a) for a in along) > MAX_LINE_OFFSET_M:
+            continue
+        centre_range = math.hypot(centre.x, centre.y)
+        if centre_range < best_range:
+            best, best_range = list(trio), centre_range
+    return best
+
+
 def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
            max_gap_m=MAX_PAIR_EDGE_M, arm_range_m=GATE_ARM_RANGE_M):
     """LabeledCones -> RedSurvey: the junction if there is one, and why if not.
@@ -227,8 +264,33 @@ def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
     # too far back sees three perfectly good reds and recovers no triple, and
     # the gaps are what prove the track is laid right and the RANGE is the
     # problem. Measured on more or fewer than three there is no gate to measure.
-    triple = in_arm if len(in_arm) == 3 else (reds if len(reds) == 3 else None)
+    # More reds than one gate has is a MAZE, not a fault. Two junctions in view
+    # at once is the normal condition once a course has more than one, and the
+    # old rule -- exactly three or refuse -- threw the good triple away along
+    # with the bad ones. Measured 2026-09-01 at the second junction of a route:
+    # the collinearity guard correctly refused five mixed trios of
+    # junction-1-leftover plus junction-2 reds, and the car armed at 1.00 m
+    # because nothing was left to arm on.
+    #
+    # So with extra reds the detector searches instead of surrendering, on
+    # exactly the tests it already applied -- both gaps inside the pair window,
+    # and collinear within MAX_LINE_OFFSET_M. Nothing is loosened. What is added
+    # is a preference: the NEAREST coherent triple, which is the gate the car is
+    # about to drive rather than the one beyond it.
+    # Only cones IN ARM RANGE may arm a gate. `armable` is that set; `triple`
+    # may fall back to three reds merely in view, which exists to MEASURE the
+    # gaps on a run that armed nothing -- the number that says whether the
+    # track is laid right or the car is standing too far back.
+    armable = None
+    if len(in_arm) == 3:
+        armable = in_arm
+    elif len(in_arm) > 3:
+        armable = _nearest_gate(in_arm, axis_rad, min_gap_m, max_gap_m)
+
+    triple = armable if armable is not None else (
+        reds if len(reds) == 3 else None)
     gaps, junction, collinear = None, None, True
+
     if triple is not None:
         fitted = fit_axis(triple, default_rad=axis_rad)
         # Order left to right across the mouth. Sorting on the fitted axis
@@ -246,7 +308,7 @@ def survey(cones, axis_rad=0.0, min_gap_m=MIN_PAIR_EDGE_M,
                  + (c.y - centre.y) * math.sin(fitted)
                  for c in (left, centre, right)]
         collinear = max(abs(a) for a in along) <= MAX_LINE_OFFSET_M
-        if (len(in_arm) == 3 and collinear
+        if (armable is not None and collinear
                 and all(min_gap_m <= g <= max_gap_m for g in gaps)):
             junction = Junction(
                 left=left, centre=centre, right=right,

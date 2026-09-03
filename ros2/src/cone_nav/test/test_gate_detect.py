@@ -131,10 +131,52 @@ def test_two_reds_are_not_a_junction():
     assert detect([cone(2.0, 1.5), cone(2.0, 0.0)]) is None
 
 
-def test_four_reds_in_range_are_not_a_junction():
-    """Something is wrong -- a misread orange, or a second junction bleeding
-    into view -- and neither is a thing to commit a turn on."""
-    assert detect(triple() + [cone(1.0, 1.0)]) is None
+def test_a_fourth_red_does_not_hide_a_gate_that_is_really_there():
+    """This test used to assert the opposite, and the reversal is deliberate.
+
+    It read: "Something is wrong -- a misread orange, or a second junction
+    bleeding into view -- and neither is a thing to commit a turn on." The
+    first half still holds. The second does not: on a course with more than one
+    junction, two gates in view at once is the NORMAL condition and never stops
+    being true, so refusing on it means the car can only ever arm on the second
+    gate once the first has left range. Measured 2026-09-01, that is exactly
+    what happened -- junction 1 armed at 2.82 m and junction 2 at 1.00 m,
+    because until then something was always in view.
+
+    Nothing is loosened to fix it. The gap window and the collinearity guard
+    still run, unchanged, on every combination; only a triple that passes both
+    can arm. What changed is that a good triple is no longer discarded along
+    with the bad ones it shares a scene with."""
+    junction = detect(triple() + [cone(1.0, 1.0)])
+    assert junction is not None
+    assert junction.gaps_m[0] == pytest.approx(1.5)
+
+
+def test_a_fourth_red_that_forms_no_gate_still_arms_nothing():
+    """The half of the old rule that survives. Extra reds that cannot be made
+    into a collinear, correctly-spaced triple are still refused -- searching
+    harder must not mean accepting more."""
+    scattered = [cone(2.0, 0.0), cone(1.4, 0.9), cone(2.6, -0.3), cone(1.1, -1.2)]
+    assert detect(scattered) is None
+    assert survey(scattered).reason == EXTRA
+
+
+def test_it_takes_the_NEAR_gate_when_two_are_in_view():
+    """The preference that makes searching safe to act on. A gate further down
+    the course is a gate for later; arming on it now would set the branch
+    filter and the divider from a junction the car has not reached."""
+    near, far = triple(2.0, 1.35), triple(2.9, 1.35)
+    junction = detect(near + far)
+    assert junction is not None
+    assert junction.centre.x == pytest.approx(2.0)
+
+
+def test_a_mixed_trio_from_two_junctions_is_still_refused():
+    """What the collinearity guard was always for, and why searching does not
+    weaken it: one red from each of two gates plus a third cannot sit on a line.
+    Recorded 2026-09-01 refusing five such trios on the track."""
+    mixed = [cone(2.0, 1.35), cone(2.0, 0.0), cone(2.9, -1.35)]
+    assert detect(mixed) is None
 
 
 def test_a_fourth_red_out_of_range_does_not_spoil_a_good_gate():
@@ -268,7 +310,10 @@ def test_the_gaps_are_measured_even_when_they_are_what_failed():
 def test_the_four_reasons_are_distinct():
     assert survey([]).reason == NO_REDS
     assert survey([cone(1.0, 0.0), cone(1.0, 1.0)]).reason == CROWDED
-    assert survey(triple(2.0, 1.35) + [cone(1.0, 0.2)]).reason == EXTRA
+    # EXTRA now means "more than three, and no three of them are a gate",
+    # so the spoiler has to be one that cannot complete one.
+    assert survey([cone(2.0, 0.0), cone(1.4, 0.9), cone(2.6, -0.3),
+                   cone(1.1, -1.2)]).reason == EXTRA
     assert survey(triple(2.75, 1.35)).reason == DISTANCE
     assert survey(triple(2.0, 0.25)).reason == GAPS
     assert survey(triple(2.0, 1.35)).reason == ""
