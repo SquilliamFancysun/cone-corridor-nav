@@ -341,6 +341,38 @@ class TopoState(object):
             self._traverse(junction, corridor_line, travel_m)
         return self.state
 
+    def hold(self, note=""):
+        """Stand the machine down for a tick the caller is driving itself.
+
+        One caller: `guidance/backout.py`, reversing the car out of a dead end.
+        That manoeuvre takes the car back THROUGH the junction it came in by,
+        which means the junction rises into view ahead of a car that is
+        pointing the wrong way down it and moving away from it. Left running,
+        `_follow` would arm an approach on that sighting and `_approach` would
+        commit a traverse a tick or two later -- consuming the very branch the
+        search is backing out to try, and steering on a gate anchor behind the
+        car.
+
+        Held rather than not called at all, because the sighting window has to
+        be EMPTIED rather than frozen. `_seen_recently` counts live junctions
+        across the last four ticks with no notion of when they were seen, so a
+        window left full from before the manoeuvre would commit on the first
+        tick after it -- from wherever the car had reversed to by then.
+
+        Returns to FOLLOW, which is where a car that has just arrived back at
+        its junction should be: the next real approach is then a normal one.
+        """
+        if self.state != FOLLOW:
+            self._reset(note or "held")
+        else:
+            self.note = note
+        self.live = None
+        self._sightings = []
+        self._confirm = 0
+        self._seen = 0
+        self.blind_ticks = 0
+        return self.state
+
     def _seen_recently(self):
         """The most recent live junction inside the sliding window, and how
         many ticks of that window saw one at all."""

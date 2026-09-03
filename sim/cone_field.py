@@ -442,6 +442,37 @@ def synth_scan(cones, points_per_rev=450, background_mm=0, t=0.0,
 IDENTITY_CALIBRATION = {"mirror": False, "angle_offset_deg": 0.0,
                         "chassis_arcs_sensor": []}
 
+# The same sensor convention, plus the arc this car's own body fills.
+#
+# IDENTITY_CALIBRATION gives the sim a 360 deg lidar, which the real car is
+# not: `docs/hardware-baseline.md` measured the chassis at sensor bearings
+# 20-162 deg, present on 97.5% of revolutions -- in CAR bearings +107 through
+# 180 to -111, so the body blanks the rear 142 deg and leaves a usable field of
+# the forward ~218.
+#
+# Driving forward barely notices. Reversing is the direction with nothing
+# behind it, so a reverse manoeuvre tuned against a 360 deg sim would be
+# optimistic in precisely the way that matters, and `ego_motion.rigid_step`
+# would be fed landmarks the car cannot actually see.
+#
+# The arc is restated in the SIM's sensor frame rather than copied from the
+# car's calibration, because the two do not share one. The car reads
+# mirror=True, angle_offset=87 (20 -> +107, 162 -> -111); `synth_scan` writes
+# mirror=False, offset=0, so car_bearing = -sensor_bearing and the same
+# physical arc lands at sensor 111-253. Check it against straight ahead: sensor
+# 0 is car 0 and must be visible, sensor 180 is dead astern and must not be.
+REAR_BLIND_CALIBRATION = {
+    "mirror": False,
+    "angle_offset_deg": 0.0,
+    "chassis_arcs_sensor": [{
+        "start_deg": 111.0,
+        "end_deg": 253.0,
+        "near_mm": 2,
+        "far_mm": 133,
+        "presence": 0.975,
+    }],
+}
+
 
 def synth_detections(cones, intr, class_ids, hfov_deg=None, dropout=(),
                      confidence=0.9, cone_height_m=0.1778):

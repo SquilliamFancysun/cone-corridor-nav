@@ -72,12 +72,27 @@ import math
 from cone_nav.control.pure_pursuit import MAX_STEER_RAD, clamp
 
 # Heading gain. Dominant by design -- see the module docstring on stability.
-K_HEADING = 1.2
+#
+# Settled in `sim/drive_sim.py` on 2026-09-02, which is what the bottom of this
+# docstring asks for, against both mirror layouts of `junction-*-blocked` with
+# the rear 142 deg masked. Swept 1.2-3.0 against K_CROSS 0.3-1.0; this pair is
+# the only one that backs out of BOTH and does it with no excursion over
+# 0.17 m, at 0.036/0.053 m mean cross-track.
+#
+# Read the sweep before trusting the pair. Neighbouring cells fail -- (2.4,
+# 0.6) loses the right-hand layout with a 1.77 m peak -- so this is a working
+# point on a marginal system, not a broad optimum, and most of what separates
+# the cells is which ticks of a speckled detection band the car happened to
+# catch. Still nothing measured on a car: `docs/junction-bringup.md` stage 8d
+# is where that happens, and expect to re-tune there.
+K_HEADING = 2.4
 
 # Cross-track gain, in steer-radians per metre of offset. Deliberately well
 # under K_HEADING: a reversing car that chases position harder than it holds
-# angle winds itself across the corridor.
-K_CROSS = 0.6
+# angle winds itself across the corridor. The sweep above bears that out --
+# every cell with a 1.8 m-plus cross-track excursion in it is one where this
+# gain was raised toward the heading one.
+K_CROSS = 0.3
 
 # The speed above which these gains have never been checked. A reverse loop
 # stiffens with speed and this one is not gain-scheduled, so the ceiling is part

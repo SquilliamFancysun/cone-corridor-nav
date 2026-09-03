@@ -33,6 +33,7 @@ import math
 import sys
 
 from cone_nav.control import pure_pursuit, speed_ctrl
+from cone_nav.guidance import backout as backout_mod
 from cone_nav.guidance import goal_stop, junction_exec
 from cone_nav.corridor.boundary_split import split
 from cone_nav.guidance.explore import ExplorePolicy
@@ -49,6 +50,7 @@ from cone_perception.geometry import intrinsics_from_hfov
 from sim import cone_field
 from sim.cone_field import (
     IDENTITY_CALIBRATION,
+    REAR_BLIND_CALIBRATION,
     Pose,
     cones_in_car_frame,
     synth_detections,
@@ -291,7 +293,8 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
              reference_heading_rad=0.0, fill_in_fov=False,
              topo=None, previous_line=None, travel_m=0.0,
              yaw_delta_rad=0.0, red_memory=None, now_s=0.0,
-             goal_latch=None, goal_armed=False):
+             goal_latch=None, goal_armed=False,
+             calibration=IDENTITY_CALIBRATION, hold_topo=False):
     """The production perception path, exactly as `fusion_view.pipeline_once`.
 
     Kept as its own function so a divergence between the sim and the car is a
@@ -313,8 +316,11 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
     steps around the same `centerline` call the plain corridor uses. Passing
     `goal_latch` turns on the goal the same way, and for the same reason -- the
     goal is one more anchor on the same line, not a second controller.
+
+    `calibration` defaults to the 360 deg lidar this sim has always had.
+    `REAR_BLIND_CALIBRATION` is the honest one; see `simulate(blind_rear=...)`.
     """
-    candidates = clustering.cone_candidates(scan, IDENTITY_CALIBRATION)
+    candidates = clustering.cone_candidates(scan, calibration)
     result = fusion.associate(candidates, detections, intr,
                               detection_age_s=detection_age_s)
 
@@ -327,8 +333,11 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
                           if red_memory is not None else (result.cones, 0))
     survey = gate_detect.survey(cones, axis_rad=reference_heading_rad)
     if topo is not None:
-        topo.update(survey.junction, previous_line, travel_m=travel_m,
-                    yaw_delta_rad=yaw_delta_rad)
+        if hold_topo:
+            topo.hold("backing out")
+        else:
+            topo.update(survey.junction, previous_line, travel_m=travel_m,
+                        yaw_delta_rad=yaw_delta_rad)
     engaged = topo is not None and topo.engaged
 
     # Read off the same PRE-FILL, pre-branch-filter list the reds are read from.
@@ -378,7 +387,8 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
         # midpoints, so without this the line simply stops at the last cone row
         # and the goal is not on the path at all.
         line = junction_exec.junction_line(line, goal_latch.goal_xy)
-    return result, cones, line, filled, corridor_line, dropped, goal_survey
+    return (result, cones, line, filled, corridor_line, dropped, goal_survey,
+            survey)
 
 
 def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
@@ -388,7 +398,8 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
              latency_ticks=DEFAULT_LATENCY_TICKS, servo_tau_s=SERVO_TAU_S,
              fill_in_fov=False, smooth_window=pure_pursuit.SMOOTH_WINDOW,
              route=None, goal_stop_m=goal_stop.STOP_RANGE_M,
-             goal_anywhere=False, cursor=None):
+             goal_anywhere=False, cursor=None, blind_rear=False,
+             reverse=False):
     """Drive the layout. Returns a SimResult; never raises on a bad run.
 
     `route` is a list of turns; passing one turns on junction handling with the
@@ -405,8 +416,23 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
     no turn still outstanding. `goal_anywhere` forces it on even while the route
     has turns left, mirroring the car's bring-up flag -- it is there to be tested
     against, not to drive a track with.
+
+    `blind_rear` masks the arc this car's own body fills -- the rear 142 deg,
+    measured. It defaults FALSE, which is wrong about the car and right about
+    every result this sim has ever produced: turning it on for everything would
+    silently move numbers that were fitted, argued over and written into
+    `docs/junction-bringup.md` against the 360 deg model. Forward driving barely
+    reads behind itself anyway; `ego_motion.rigid_step` does, since it matches
+    cones that have passed the car. So the flag is opt-in, and reversing -- the
+    direction with nothing behind it -- is what opts in.
+
+    `reverse` gives the car a `BackoutManoeuvre`, so a dead end no longer ENDS
+    the run: it backs out to the junction and takes the branch it has not
+    tried. Without it the run stops at the wall, which is what the operator's
+    hands were for and remains the fallback on the track.
     """
     intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
+    calibration = REAR_BLIND_CALIBRATION if blind_rear else IDENTITY_CALIBRATION
     vehicle = Vehicle(wheelbase_m, rear_axle_in_base, **(start or {}))
 
     if cursor is None and route:
@@ -415,6 +441,14 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
     red_memory = label_memory.RedMemory() if cursor is not None else None
     goal_latch = goal_stop.GoalLatch(stop_range_m=goal_stop_m)
     dead_end_latch = dead_end.DeadEndLatch()
+    backout = backout_mod.BackoutManoeuvre() if reverse else None
+    # `topo.commit_range_m` is zeroed by `_reset` the instant a gate is called
+    # passed, and a dead end comes many seconds after that -- so the range the
+    # car committed from has to be caught while it still exists. This is the
+    # whole of that: keep the last non-zero one.
+    last_commit_range_m = 0.0
+    distance_at_node = 0.0
+    backouts = 0
     previous_line = None
     last_travel = 0.0
     last_yaw = 0.0
@@ -448,12 +482,22 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
         # end of the route by construction, so a magenta seen while a turn is
         # still outstanding is a misread and must not stop the car.
         goal_armed = goal_anywhere or topo is None or topo.cursor.goal_armed
-        result, cones, line, filled, corridor_line, dropped, goal_survey = pipeline(
+        # Reversing, the car is pointing the wrong way down a junction it is
+        # moving away from, and a magenta ahead of it is not an arrival. Both
+        # machines stand down; the gate survey still runs, because the
+        # manoeuvre's own ending is read off it. Keep identical to
+        # drive_junction.drive_pipeline.
+        backing_out = backout is not None and backout.active
+        if backing_out:
+            goal_armed = False
+        (result, cones, line, filled, corridor_line, dropped, goal_survey,
+         survey) = pipeline(
             scan, detections, intr, detection_age_s, fill_sides=fill_sides,
             reference_heading_rad=axis_rad, fill_in_fov=fill_in_fov,
             topo=topo, previous_line=previous_line, travel_m=last_travel,
             yaw_delta_rad=last_yaw, red_memory=red_memory, now_s=i * DT_S,
-            goal_latch=goal_latch, goal_armed=goal_armed)
+            goal_latch=goal_latch, goal_armed=goal_armed,
+            calibration=calibration, hold_topo=backing_out)
         previous_line = corridor_line
         # The corridor the car is in rotates relative to the car through a
         # bend, so the side split follows last frame's line rather than
@@ -477,15 +521,34 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
                                  min_reach_m=(0.0 if goal_latch.run_in or in_mouth
                                               else speed_ctrl.MIN_REACH_M),
                                  min_points=1 if goal_latch.run_in else 2)
-        duty_now = speed_ctrl.ramp(
-            duty_now, 0.0 if goal_latch.stopped else target.duty)
-
-        # Median-filter the command exactly as drive_corridor.py does, so a
-        # gain chosen here is chosen against the same signal the car acts on.
-        steer_history, commanded = pure_pursuit.smooth(
-            steer_history,
-            pursuit.normalised * pure_pursuit.MAX_STEER_RAD if pursuit else None,
-            window=smooth_window)
+        # ONE branch decides both commands, as on the car. Ramping the forward
+        # target and then the reverse one over the top does not merely
+        # duplicate work: `ramp` PIVOTS at zero on a direction change, so a
+        # forward target of 0.0 alternating with a reverse target of -0.05
+        # leaves the car crawling backwards at a third of the commanded duty.
+        # Measured on junction-left-blocked before this was a single branch:
+        # 2.99 m in the 200 ticks that should have covered 7.5.
+        if not backing_out:
+            duty_now = speed_ctrl.ramp(
+                duty_now, 0.0 if goal_latch.stopped else target.duty)
+            # Median-filter the command exactly as drive_corridor.py does, so a
+            # gain chosen here is chosen against the same signal the car acts
+            # on.
+            steer_history, commanded = pure_pursuit.smooth(
+                steer_history,
+                pursuit.normalised * pure_pursuit.MAX_STEER_RAD
+                if pursuit else None,
+                window=smooth_window)
+        else:
+            # The manoeuvre owns both commands while it runs, and its steer is
+            # taken UNSMOOTHED: a median window straddling a direction change
+            # blends two laws that disagree about the sign of the heading term.
+            # The history is cleared at both edges for the same reason.
+            backout.update(corridor_line, survey.junction,
+                           travel_m=last_travel, armed=True)
+            duty_now = speed_ctrl.ramp(duty_now, backout.duty)
+            commanded = backout.steer_normalised * pure_pursuit.MAX_STEER_RAD
+            steer_history = []
         # Age the command through the perception-to-actuator delay, then let the
         # servo chase it rather than snapping to it.
         pipeline_delay.append(commanded)
@@ -548,17 +611,50 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
             corridor_line, cones, oranges=split(cones).dead_ends,
             armed=(not engaged or past) and not goal_latch.run_in,
             origin=rear_axle_in_base, travel_m=last_travel)
-        if dead_end_latch.latched:
+        if dead_end_latch.latched and not backing_out:
             if topo is not None:
                 resume = topo.cursor.dead_end()
                 outcome = (f"dead end: {dead_end_latch.reason}"
                            + (f"; would take {resume}" if resume else
                               "; nothing left to explore"))
             else:
+                resume = None
                 outcome = f"dead end: {dead_end_latch.reason}"
+            if backout is None or resume is None:
+                break
+            # The car backs itself out instead of the run ending here. The
+            # edge is measured from the last node rather than from the start,
+            # and it is a BOUND on the reverse, not its target -- see
+            # guidance/backout.py.
+            backout.begin(resume, budget_m=abs(distance - distance_at_node),
+                          commit_range_m=last_commit_range_m)
+            backouts += 1
+            steer_history = []
+            duty_now = 0.0
+
+        if backout is not None and backout.arrived:
+            # Back where it committed from, facing the junction. Releasing the
+            # dead end restarts that latch's own re-arm travel floor, which is
+            # what stops the wall behind the car being named again the moment
+            # it drives forward.
+            dead_end_latch.release()
+            backout.release()
+            steer_history = []
+            distance_at_node = distance
+        if backout is not None and backout.abandoned:
+            outcome = f"backout failed: {backout.reason}"
             break
 
-        stalled = stalled + 1 if duty_now <= 0.0 else 0
+        # Caught while it exists; see where `last_commit_range_m` is declared.
+        if topo is not None and topo.commit_range_m > 0.0:
+            last_commit_range_m = topo.commit_range_m
+        if topo is not None and topo.note == "passed":
+            distance_at_node = distance
+
+        # A stalled car is a stopped one. A reversing car is moving, so the
+        # test is equality rather than the `<= 0.0` it was while duty could
+        # only ever be positive.
+        stalled = stalled + 1 if duty_now == 0.0 else 0
         if stalled >= stall_ticks:
             outcome = f"stopped: {target.reason or 'zero duty'}"
             break

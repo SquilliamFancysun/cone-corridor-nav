@@ -100,7 +100,7 @@ def test_the_junction_is_detectable_on_the_approach():
     seen = 0
     for i in range(30):
         scan, dets = observe(layout, cone_field.Pose(i * 0.12, 0.0, 0.0), intr)
-        _r, cones, _l, _f, _c, _d, _g = pipeline(scan, dets, intr)
+        _r, cones, _l, _f, _c, _d, _g, _s = pipeline(scan, dets, intr)
         if gate_detect.detect(cones) is not None:
             seen += 1
     assert seen >= 2, f"only {seen} ticks of the approach see a whole triple"

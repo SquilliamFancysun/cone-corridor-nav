@@ -66,6 +66,7 @@ from cone_nav.corridor.centerline import centerline
 from cone_nav.corridor import side_assign
 from cone_nav.corridor.side_assign import fill_unlabeled, heading_of
 from cone_nav.corridor.boundary_split import split
+from cone_nav.guidance import backout as backout_mod
 from cone_nav.guidance import goal_stop, junction_exec, planner
 from cone_nav.guidance.explore import ExplorePolicy
 from cone_nav.guidance.route_exec import RouteCursor, load_route
@@ -127,6 +128,14 @@ JUNCTION_STATUS_SCHEMA = {
         maze_nodes={"type": "integer"},
         maze_edges={"type": "integer"},
         maze_dead_ends={"type": "integer"},
+        backout_state={"type": "string", "description": "idle / backing / arrived / abandoned -- the reverse out of a dead end. Empty when --reverse is off"},
+        backout_reason={"type": "string", "description": "what the manoeuvre is doing or why it stopped. The first field to read when a run ends somewhere unexpected"},
+        backout_travelled_m={"type": "number", "description": "distance reversed so far, unsigned"},
+        backout_bound_m={"type": "number", "description": "the distance bound. Reaching it is an abandon, never a healthy ending"},
+        backout_gate_m={"type": "number", "description": "range to the gate midpoint this tick, once a whole triple is back in view. Where it stopped, against the band it had to stop inside"},
+        backout_heading_err_deg={"type": "number", "description": "corridor axis in the car frame, left positive -- NOT the car's heading. The reverse law's h"},
+        backout_cross_track_m={"type": "number", "description": "car's offset from the centreline, left positive. The reverse law's y; a drifting reverse is diagnosed from which of the two grew"},
+        backout_blind_ticks={"type": "integer", "description": "consecutive ticks with no corridor to steer on. The manoeuvre holds its last command briefly and then stops"},
         topo_note={"type": "string"},
         goal_state={"type": "string", "description": "seeking / run_in / stopped"},
         goal_range_m={"type": "number", "description": "to the goal, measured if seen this tick else carried"},
@@ -156,7 +165,8 @@ JUNCTION_SCHEMA = {
 def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                    axis_rad=0.0, topo=None, previous_line=None,
                    travel_m=0.0, yaw_delta_rad=0.0, red_memory=None,
-                   goal_latch=None, goal_armed=False, dead_end_latch=None):
+                   goal_latch=None, goal_armed=False, dead_end_latch=None,
+                   backing_out=False):
     """One revolution -> cones, centerline, steering, duty, plus the manoeuvre.
 
     Identical to `drive_corridor.drive_pipeline` up to the fill and after the
@@ -186,8 +196,17 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     survey = gate_detect.survey(cones, axis_rad=axis_rad)
     junction = survey.junction
     if topo is not None:
-        topo.update(junction, previous_line, travel_m=travel_m,
-                    yaw_delta_rad=yaw_delta_rad)
+        if backing_out:
+            # Reversing takes the car back THROUGH the junction, which rises
+            # into view ahead of a car pointing the wrong way down it and
+            # moving away from it. Left running, `_follow` would arm an
+            # approach on that sighting and `_approach` would commit a traverse
+            # on the very branch the search is backing out to try. The survey
+            # still runs above -- the manoeuvre's own ending is read off it.
+            topo.hold("backing out")
+        else:
+            topo.update(junction, previous_line, travel_m=travel_m,
+                        yaw_delta_rad=yaw_delta_rad)
 
     # Read off the same PRE-FILL, pre-branch-filter list the reds are. The fill
     # only ever paints blue and yellow so it cannot invent a goal, but
@@ -291,7 +310,7 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
         past = topo is not None and topo.past_gate
         dead_end_latch.update(
             corridor_line, cones, oranges=split(cones).dead_ends,
-            armed=(not engaged or past) and not run_in,
+            armed=(not engaged or past) and not run_in and not backing_out,
             origin=axle, travel_m=travel_m)
     return (result, cones, filled, line, pursuit, duty, corridor_line,
             junction, dropped, survey, remembered, goal_survey)
@@ -299,7 +318,7 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
 
 def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
               goal_latch=None, goal_armed=False, dead_end_latch=None,
-              pose=None, maze=None):
+              pose=None, maze=None, backout=None):
     """The corridor status record, plus what the manoeuvre is doing."""
     gaps = ""
     live = topo.live if topo else None
@@ -364,6 +383,20 @@ def status_of(base, topo, junction, dropped, survey=None, goal_survey=None,
         maze_edges=(sum(len(e) for e in maze.edges.values()) if maze else 0),
         maze_dead_ends=(len(maze.find(graph_builder.DEAD_END))
                         if maze else 0),
+        # The manoeuvre. `backout_state` is the field to read first when a run
+        # ends somewhere unexpected: `abandoned` with a reason names its own
+        # cause, and `arrived` beside a `gate_range_m` says where it stopped
+        # against the band it had to stop inside.
+        backout_state=backout.state if backout else "",
+        backout_reason=backout.reason if backout else "",
+        backout_travelled_m=round(backout.travelled_m, 3) if backout else 0.0,
+        backout_bound_m=round(backout.bound_m, 3) if backout else 0.0,
+        backout_gate_m=round(backout.gate_range_m, 3) if backout else 0.0,
+        backout_heading_err_deg=(round(math.degrees(backout.heading_err_rad), 2)
+                                 if backout else 0.0),
+        backout_cross_track_m=(round(backout.cross_track_m, 3)
+                               if backout else 0.0),
+        backout_blind_ticks=backout.blind_ticks if backout else 0,
     )
 
 
@@ -382,6 +415,22 @@ def parse_args(argv=None):
                         choices=["left", "right"],
                         help="which branch --explore tries first at a junction "
                              "it has not seen before (default: left)")
+    parser.add_argument("--reverse", action="store_true",
+                        help="back the car out of a dead end under power "
+                             "instead of stopping for someone to carry it. "
+                             "Exploring runs only; see docs/junction-bringup.md "
+                             "stage 8")
+    parser.add_argument("--reverse-only", action="store_true",
+                        help="command a steady reverse while X is held and "
+                             "nothing else. The bench check that this VESC "
+                             "reverses on a negative duty at all -- stage 8a. "
+                             "Wheels off the ground the first time")
+    parser.add_argument("--max-reverse-duty", type=float,
+                        default=speed_ctrl.MAX_REVERSE_DUTY,
+                        help="duty magnitude while backing out (default "
+                             "%(default)s, the cogging floor). Reverse is the "
+                             "direction with no lidar behind it; raise this "
+                             "only with a reason")
     parser.add_argument("--emit-route", metavar="PATH",
                         help="on exit, write the route from the start to the "
                              "goal implied by what was explored -- the driven "
@@ -416,6 +465,28 @@ def parse_args(argv=None):
                         help="run the original driving behavior without "
                              "starting an audio player")
     args = finalise_args(parser, parser.parse_args(argv))
+
+    if args.reverse_only:
+        if args.dry_run or args.steer_only:
+            parser.error("--reverse-only is a mode: it cannot be combined with "
+                         "--dry-run or --steer-only.")
+        args.mode = "reverse-only"
+    if args.reverse_only and args.reverse:
+        parser.error("--reverse-only drives a bare reverse and never reaches a "
+                     "junction, so --reverse has nothing to do. Pass one.")
+    if args.reverse and not args.explore:
+        parser.error("--reverse backs out of a dead end to take the branch the "
+                     "search has not tried,\n       which only --explore "
+                     "decides. A route says which way to turn already.")
+    if args.max_reverse_duty <= 0.0:
+        parser.error("--max-reverse-duty is a magnitude and must be positive; "
+                     "the sign is applied by speed_ctrl.reverse_duty.")
+    if args.max_reverse_duty > speed_ctrl.MIN_MOVE_DUTY * 2:
+        print(f"WARNING: --max-reverse-duty {args.max_reverse_duty} is well "
+              f"over the cogging floor of {speed_ctrl.MIN_MOVE_DUTY}.\n"
+              "         Reverse is the direction with no lidar behind it and "
+              "reverse_ctrl's loop\n         stiffens with speed on gains "
+              "nothing has measured on a car.")
 
     if not 0.0 <= args.audio_volume <= 1.0:
         parser.error("--audio-volume must be between 0.0 and 1.0")
@@ -498,11 +569,32 @@ def banner(headline, detail=""):
 
 
 def announce(args):
+    if args.reverse_only:
+        print(RULE)
+        print("  REVERSE ONLY   the car will drive BACKWARDS while X is held,")
+        print(f"                 at duty {args.max_reverse_duty}, with nothing "
+              "steering it.")
+        print("                 Wheels off the ground the first time. Nothing "
+              "is behind")
+        print("                 the car that the car can see -- the chassis "
+              "blanks the")
+        print("                 rear 142 deg. See docs/junction-bringup.md "
+              "stage 8a.")
+        print(RULE + "\n")
+        return
     if args.explore:
         print(f"explore   no route: deciding at each junction, trying "
               f"{args.explore_first} first")
         print("           a dead end backs the search out and takes the other "
               "branch")
+        if args.reverse:
+            print(f"           at a wall the car BACKS ITSELF OUT under "
+                  f"power at duty {args.max_reverse_duty} -- no carry")
+            print("           the car cannot see behind it. Keep the corridor "
+                  "behind it clear")
+        else:
+            print("           at a wall the car stops for you to carry it "
+                  "back (stage 7b)")
         if args.emit_route:
             print(f"           the route to the goal will be written to "
                   f"{args.emit_route}")
@@ -608,6 +700,14 @@ def main(argv=None):
     red_memory = label_memory.RedMemory()
     goal_latch = goal_stop.GoalLatch(stop_range_m=args.goal_stop)
     dead_end_latch = dead_end.DeadEndLatch()
+    backout = (backout_mod.BackoutManoeuvre(
+        max_reverse_duty=args.max_reverse_duty) if args.reverse else None)
+    # `topo.commit_range_m` is zeroed by `_reset` the instant a gate is called
+    # passed, and a dead end comes many seconds after that -- so the range the
+    # car committed from has to be caught while it still exists. It sizes the
+    # backout's distance bound; see cone_nav/guidance/backout.py.
+    last_commit_range_m = 0.0
+    backouts = 0
     # The pose is read by the map and by the report, and by nothing that
     # steers. See cone_perception/odometry.py on why that line matters.
     pose = odometry.Pose()
@@ -719,6 +819,13 @@ def main(argv=None):
             # once it is spent, exploring arms it throughout. See
             # cone_nav/guidance/explore.py.
             goal_armed = args.goal_anywhere or topo.cursor.goal_armed
+            # Reversing, the car points the wrong way down a junction it is
+            # moving away from, and a magenta ahead of it is not an arrival.
+            # Both machines stand down inside drive_pipeline; the gate survey
+            # still runs, because the manoeuvre's own ending is read off it.
+            backing_out = backout is not None and backout.active
+            if backing_out:
+                goal_armed = False
             (result, cones, filled, line, pursuit, duty, corridor_line,
              junction, dropped, survey, remembered,
              goal_survey) = drive_pipeline(
@@ -726,7 +833,7 @@ def main(argv=None):
                 topo=topo, previous_line=previous_line, travel_m=travel_m,
                 yaw_delta_rad=yaw_delta_rad, red_memory=red_memory,
                 goal_latch=goal_latch, goal_armed=goal_armed,
-                dead_end_latch=dead_end_latch)
+                dead_end_latch=dead_end_latch, backing_out=backing_out)
             previous_line = corridor_line
             axis_rad = heading_of(line, default=axis_rad)
 
@@ -745,6 +852,11 @@ def main(argv=None):
             # `path_before` and `turn_before` are captured at the top of the
             # tick, and the dead end is recorded before `cursor.dead_end()`
             # unwinds the stack out from under it.
+            # Caught while it exists; see where `last_commit_range_m` is
+            # declared. `_reset` zeroes it on the same tick `passed` is set.
+            if topo.commit_range_m > 0.0:
+                last_commit_range_m = topo.commit_range_m
+
             if topo.note == "passed":
                 driven_turns.append(turn_before)
                 maze.record_pass(path_before, turn_before, length_m=(
@@ -754,12 +866,29 @@ def main(argv=None):
             if dead_end_latch.latched and not was_dead_end:
                 maze.record_dead_end(topo.cursor.path)
                 resume = topo.cursor.dead_end()
+                # Before `last_node_pose` moves: how far the car drove from the
+                # junction to this wall. It is a BOUND on the reverse, not its
+                # target -- see cone_nav/guidance/backout.py.
+                edge_m = odometry.distance_between(last_node_pose,
+                                                   pose.snapshot())
                 last_node_pose = pose.snapshot()
-                banner(
-                    f"*** DEAD END ***   {dead_end_latch.reason}",
-                    (f"back out to the last junction and take {resume.upper()}"
-                     if resume else
-                     "nothing left to explore -- every branch has been tried"))
+                if backout is not None and resume is not None:
+                    backout.begin(resume, budget_m=edge_m,
+                                  commit_range_m=last_commit_range_m)
+                    backouts += 1
+                    steer_history = []
+                    duty_now = 0.0
+                    banner(
+                        f"*** DEAD END ***   {dead_end_latch.reason}",
+                        f"backing out {backout.bound_m:.2f} m at most, to "
+                        f"take {resume.upper()}")
+                else:
+                    banner(
+                        f"*** DEAD END ***   {dead_end_latch.reason}",
+                        (f"back out to the last junction and take "
+                         f"{resume.upper()}" if resume else
+                         "nothing left to explore -- every branch has been "
+                         "tried"))
             was_dead_end = dead_end_latch.latched
 
             if goal_latch.stopped and not was_at_goal:
@@ -782,12 +911,62 @@ def main(argv=None):
                 # is here so the stop is stated rather than incidental, and so
                 # it holds if a future reach rule would not.
                 target_duty = 0.0
+
+            steer_override = None
+            if backing_out:
+                # The manoeuvre owns both commands while it runs. It is driven
+                # here rather than in `drive_pipeline` so that everything which
+                # decides this car's throttle stays in one place, next to
+                # `armed` and --steer-only.
+                #
+                # It gets the UNANCHORED line, for the same reason the dead-end
+                # detector does: an anchor is a point threaded onto the driven
+                # line, and steering a reverse on a gate anchor would regulate
+                # against a point the car is deliberately moving away from.
+                backout.update(corridor_line, junction, travel_m=travel_m,
+                               armed=armed)
+                target_duty = backout.duty
+                steer_override = backout.steer_normalised
+            elif args.reverse_only:
+                # Stage 8a: a bare commanded reverse, nothing steering it.
+                target_duty = (speed_ctrl.reverse_duty(args.max_reverse_duty)
+                               if armed else 0.0)
+                steer_override = 0.0
+
             duty_now = speed_ctrl.ramp(duty_now, target_duty)
 
             steer_history, steer = pure_pursuit.smooth(
                 steer_history,
                 pursuit.normalised if pursuit is not None else None,
                 window=args.smooth_window)
+            if steer_override is not None:
+                # Unsmoothed, and the history cleared at both edges: a median
+                # window straddling a direction change blends two laws that
+                # disagree about the sign of the heading term.
+                steer = steer_override
+                steer_history = []
+
+            if backout is not None and backout.arrived:
+                # Back where it can see the whole junction. Releasing the dead
+                # end restarts that latch's own re-arm travel floor, which is
+                # what stops the wall behind the car being named again the
+                # moment it drives forward.
+                dead_end_latch.release()
+                backout.release()
+                steer_history = []
+                last_node_pose = pose.snapshot()
+                banner(f"BACKED OUT   now taking "
+                       f"{(topo.cursor.current or '-').upper()}",
+                       "pose frame intact -- the car did the moving, so this "
+                       "edge is measured")
+            elif backout is not None and backout.abandoned:
+                # Hand back to the operator, which is exactly the behaviour
+                # this manoeuvre replaces. The dead end stays latched, so X
+                # released and pressed again resumes the carry.
+                banner(f"BACKOUT ABANDONED   {backout.reason}",
+                       "carry the car back to the junction and press X, as in "
+                       "stage 7b")
+                backout.release()
             servo = 0.0
             if vesc is not None:
                 if armed:
@@ -821,7 +1000,7 @@ def main(argv=None):
                 commanded=steer)
             status = status_of(base, topo, junction, dropped, survey,
                                dead_end_latch=dead_end_latch, pose=pose,
-                               maze=maze,
+                               maze=maze, backout=backout,
                                goal_survey=goal_survey, goal_latch=goal_latch,
                                goal_armed=goal_armed)
             if goal_latch.stopped:
