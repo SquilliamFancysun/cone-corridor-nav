@@ -807,11 +807,38 @@ def main(argv=None):
                 # afterwards would start from the wrong place. Poisoning the
                 # frame makes those come back unmeasured instead of wrong.
                 pose.mark_discontinuity()
+                # The pose is not the only thing the lift invalidated. Every
+                # scan-to-scan feedback the loop carries is now wrong, and two
+                # of them feed the very thing the car is about to do --
+                # recognise the junction again.
+                #
+                # `axis_rad` is the worst. It orders the reds left-to-right in
+                # `gate_detect.survey` and picks which wall a cone is on in
+                # `fill_unlabeled`, and `heading_of` HOLDS its last value
+                # whenever the line dies -- which at a wall it always has. So
+                # it reaches the re-approach carrying a heading from inside the
+                # branch, 20-25 deg off the corridor. Zero is the car's own
+                # frame and the right prior, for the same reason
+                # `goal_detect.trusted_axis` falls back to it: a car placed in
+                # a corridor is aligned with it.
+                #
+                # `red_memory` is metres out of date and re-binds on a 0.20 m
+                # gate sized for ONE tick of travel, so until its 3 s TTL runs
+                # out it can paint red onto whatever now stands where a
+                # different cone used to be.
+                #
+                # Then the odometry landmarks, the corridor line `topo_state`
+                # reads next tick, and the steering median.
+                axis_rad = 0.0
+                red_memory.forget()
+                previous_cones = None
+                previous_line = None
+                steer_history = []
                 banner(
                     "DEAD END RELEASED   now taking "
                     f"{(topo.cursor.current or '-').upper()}",
-                    "pose frame broken by the lift; edges across it are "
-                    "unmeasured")
+                    "pose frame broken by the lift; carried perception state "
+                    "cleared")
 
             # All three read `was_armed` before it is overwritten below, so
             # the audio latches on the same rising edge the goal and the dead

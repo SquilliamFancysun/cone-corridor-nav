@@ -91,6 +91,23 @@ class RedMemory(object):
         self.gate_m = gate_m
         self._entries = []
 
+    def forget(self):
+        """Drop every remembered red. The car has been moved by something the
+        scan cannot see.
+
+        Every entry is a position in base_link plus an expiry, and re-binding
+        gates on `MEMORY_GATE_M` -- 0.20 m, sized for one tick of the car's own
+        travel. Carry the car back to a junction and the whole set is metres
+        wrong, so for up to `TTL_S` afterwards a remembered red can land on
+        whichever cluster happens to fall within 0.20 m of where a different
+        cone used to be. That is a phantom red at the one moment the car is
+        trying to recognise a gate again.
+
+        Expiry alone does not cover it: three seconds is a long time at the
+        start of an approach, and the memory is wrong for all of it.
+        """
+        self._entries = []
+
     def apply(self, cones, now):
         """LabeledCones -> (cones, remembered_count), reds restored.
 

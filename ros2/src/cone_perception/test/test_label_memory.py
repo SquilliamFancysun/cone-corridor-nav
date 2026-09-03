@@ -138,3 +138,23 @@ def test_the_memory_gate_is_tighter_than_the_tracker():
     from cone_perception import ego_motion
     assert label_memory.MEMORY_GATE_M < ego_motion.MATCH_GATE_M
     assert label_memory.MEMORY_GATE_M > 1.2 * 0.1   # fastest legal tick step
+
+
+def test_forgetting_drops_everything_the_lift_invalidated():
+    """Carrying the car back to a junction moves it by metres, and every entry
+    is a base_link position re-bound on a 0.20 m gate sized for ONE tick of
+    travel. Left in place, a remembered red lands on whichever cluster now sits
+    where a different cone used to be -- a phantom red at the exact moment the
+    car is trying to recognise the gate again."""
+    memory = label_memory.RedMemory()
+    cones = [LabeledCone(CLASS_RED, 0.9, 2.0, 0.0)]
+    memory.apply(cones, 0.0)
+    assert len(memory) == 1
+
+    memory.forget()
+    assert len(memory) == 0
+
+    # a cluster where the remembered red used to be is no longer repainted
+    out, remembered = memory.apply([LabeledCone(UNLABELED, 0.0, 2.0, 0.0)], 0.1)
+    assert remembered == 0
+    assert out[0].cone_class == UNLABELED
