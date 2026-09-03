@@ -227,3 +227,33 @@ def test_a_real_wall_still_has_a_line_behind_it():
     latch = DeadEndLatch()
     assert run(latch, 6, FakeLine(0.8), oranges=[FakeCone(1.0, 0.0)]) == DEAD_END
     assert "0.80 m" in latch.reason
+
+
+def test_an_orange_where_a_boundary_cone_stands_is_not_a_wall():
+    """A wall cone stands across the corridor near its centreline; a boundary
+    cone stands on the wall at the 0.75 m half-width. Measured 2026-09-02 in a
+    setting sun, orange was 27% of boundary-ish sightings on a track with one
+    orange cone per dead end -- the misreads were yellows, and they sit exactly
+    there."""
+    latch = DeadEndLatch()
+    run(latch, 6, FakeLine(0.4), oranges=[FakeCone(1.0, -0.75)])
+    assert not latch.latched, "a misread yellow must not shorten the wait"
+
+
+def test_an_orange_across_the_end_still_counts():
+    """The genuine case has to survive the tighter gate: a wall cone seen by a
+    car that is offset or angled, but still near the axis."""
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.4),
+               oranges=[FakeCone(1.0, 0.35)]) == DEAD_END
+    assert "orange wall seen" in latch.reason
+
+
+def test_a_rejected_orange_only_costs_time_not_the_wall():
+    """The refusal must not veto the dead end -- geometry is the signal and
+    orange is corroboration, so a misread should slow it to the twelve-tick
+    path rather than silence it."""
+    latch = DeadEndLatch()
+    assert run(latch, LONE_CONFIRM_TICKS, FakeLine(0.4),
+               oranges=[FakeCone(1.0, -0.75)]) == DEAD_END
+    assert "geometry alone" in latch.reason

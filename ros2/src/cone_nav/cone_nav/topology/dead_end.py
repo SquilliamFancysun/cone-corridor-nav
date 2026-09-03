@@ -83,9 +83,34 @@ LONE_CONFIRM_TICKS = 12
 MIN_CONES = 4
 
 # How near an orange must be to count as this corridor's wall rather than
-# something across the field, and how far off the car's axis it may sit.
+# something across the field.
 WALL_RANGE_M = 2.5
-WALL_OFFSET_M = 1.2
+
+# And how far off the car's axis it may sit. This is a POSITION test doing a
+# classification job, and it is worth saying why.
+#
+# A dead-end wall cone stands across the end of a corridor, near its
+# centreline. A boundary cone stands on the wall, at the corridor half-width --
+# `centerline.DEFAULT_HALF_WIDTH_M`, 0.75 m. Those are different places, so an
+# orange at 0.75 m off the axis is far more likely to be a misread yellow than
+# a wall.
+#
+# That is not hypothetical. Measured 2026-09-02 in a setting sun
+# (`data/trials/explore-5.jsonl`): orange was 27% of all boundary-ish sightings
+# on a track carrying ONE orange cone per dead end -- 647 of them -- while
+# yellow ran depleted against blue, 787 to 955. The missing yellows were being
+# called orange.
+#
+# 0.5 m keeps a wall cone the car meets while offset or angled, and rejects a
+# boundary cone at 0.75 m with a quarter-metre of margin either way.
+#
+# This only stops a misread ACCELERATING the confirmation from twelve ticks to
+# five. It cannot restore the wall the misread destroyed: a cone labelled
+# orange leaves `boundary_split`'s yellow bucket, so the corridor loses that
+# side, and `side_assign.fill_unlabeled` will not repaint a cone that already
+# carries a class. A confident wrong label costs more than a missing one, and
+# the fix for that is the detector, not this constant.
+WALL_OFFSET_M = 0.5
 
 # How far the car must travel after a release before this may latch again.
 #
