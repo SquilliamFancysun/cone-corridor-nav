@@ -495,9 +495,23 @@ def main(argv=None):
 
             if now - last_report >= 2.0:
                 last_report = now
+                # The three counters that say WHY a cone the camera plainly
+                # saw carries no label, because that is the question this tool
+                # gets opened to answer and /fusion_status needed a Foxglove
+                # panel to read. `in_fov` is the bearing half -- a cluster in
+                # frame that no box reached -- and `rng_rej` is the other half,
+                # a box that matched on bearing and was then refused because
+                # the bbox-height range disagreed with the lidar. They want
+                # opposite fixes: a calibration, or the range gate.
                 print(f"  {result.matched}/{result.candidates} cones labelled, "
                       f"{len(line.points)} centerline points, "
                       f"{bounds.counts()}")
+                print(f"      why not: in_fov {result.unmatched_in_fov}"
+                      f"  rng_rej {result.range_rejected}"
+                      f"  boxes_unused {result.unmatched_detections}"
+                      f"  out_of_fov {result.out_of_fov}"
+                      f"  ({result.detections} boxes"
+                      + (", STALE" if result.stale else "") + ")")
     except KeyboardInterrupt:
         print("\nstopping")
     finally:
