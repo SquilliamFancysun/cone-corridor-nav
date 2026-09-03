@@ -355,10 +355,10 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
             cones, reference_heading_rad=reference_heading_rad,
             fill_in_fov=fill_in_fov, gate_line=line_mask)
 
-    gate_xy, dropped = None, 0
+    dropped = 0
     if topo is not None:
         if topo.engaged and topo.junction is not None:
-            gate_xy, _divider = junction_exec.select(topo.junction, topo.turn)
+            junction_exec.select(topo.junction, topo.turn)
             # The divider and axis come from the machine, not from the latched
             # junction: while the reds are out of frame those are carried
             # forward with the car's motion and the latched pair are stale.
@@ -367,8 +367,12 @@ def pipeline(scan, detections, intr, detection_age_s=0.0, fill_sides=True,
 
     corridor_line = centerline(cones, car_xy=(0.0, 0.0))
     line = corridor_line
-    if topo is not None and topo.anchor_ok and gate_xy is not None:
-        line = junction_exec.junction_line(corridor_line, gate_xy)
+    # The anchor comes from `topo`, not from `select()`, because `topo` is what
+    # carries it forward on measured motion. `select()` reads whichever junction
+    # object is current -- live or latched -- and a latched one is frozen in a
+    # frame the car has driven out of.
+    if topo is not None and topo.anchor_ok:
+        line = junction_exec.junction_line(corridor_line, topo.anchor_xy)
     if goal_latch is not None and goal_latch.anchor_ok:
         # The same helper, for the same reason: a magenta cone forms no
         # midpoints, so without this the line simply stops at the last cone row

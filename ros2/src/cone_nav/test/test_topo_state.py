@@ -18,6 +18,7 @@ from cone_nav.topology.topo_state import (
     COMMIT_WINDOW_TICKS,
     FOLLOW,
     MAX_TRAVERSE_TICKS,
+    MAX_ANCHOR_BLIND_TICKS,
     MIN_REACQUIRE_POINTS,
     PASSED_CONFIRM_TICKS,
     TRAVERSE,
@@ -35,15 +36,23 @@ class FakeCone(object):
 
 
 class FakeJunction(object):
-    """Only what topo_state touches: a centre cone, an axis, a gate range."""
+    """Only what topo_state touches: a centre cone, an axis, a gate range, and
+    the gate midpoint for each turn -- which it carries forward as the anchor."""
 
-    def __init__(self, gate_range=GATE_RANGE_M, axis_rad=0.0):
+    def __init__(self, gate_range=GATE_RANGE_M, axis_rad=0.0, gap=0.7):
         self.gate_range = gate_range
         self.centre = FakeCone(gate_range, 0.0)
         self.axis_rad = axis_rad
+        self.gap = gap
 
     def range_for(self, _turn):
         return self.gate_range
+
+    def gate_for(self, turn):
+        # Midway between the centre cone and the outer red on that side, which
+        # is what gate_detect.Junction returns.
+        side = +1.0 if turn == "left" else -1.0
+        return (self.gate_range, side * self.gap / 2.0)
 
 
 class FakeLine(object):
@@ -163,14 +172,80 @@ def test_a_healthy_corridor_alone_does_not_end_the_manoeuvre():
     assert topo.cursor.current == "left"
 
 
-def test_the_anchor_is_only_used_on_a_live_detection():
-    """A latched gate midpoint is a point in a frame that has moved out from
-    under it. It may steer the half-plane; it may not be steered AT."""
+def test_the_anchor_is_carried_when_the_triple_is_not_seen():
+    """This is the rule that changed, and why. Refusing a latched anchor was
+    right while nothing measured the car's motion -- a frozen point is wrong by
+    however far it has driven. odometry.py made that false, and the refusal was
+    costing the whole manoeuvre: measured 2026-09-02 (`explore-4.jsonl`), a
+    186-tick traverse recovered the triple on 5 ticks, so for 181 of them there
+    was no gate to steer at and the car drove straight into the divider."""
     topo = machine()
     commit(topo)
     assert topo.anchor_ok
-    topo.update(None, SHORT)
+    topo.update(None, SHORT, travel_m=0.1)
     assert topo.engaged
+    assert topo.anchor_ok, "a blind tick must still have a gate to steer at"
+
+
+def test_the_carried_anchor_moves_with_the_car():
+    """Carried, not frozen. A metre driven puts the gate a metre nearer."""
+    topo = machine()
+    commit(topo)
+    before = topo.anchor_xy[0]
+    topo.update(None, SHORT, travel_m=1.0)
+    assert topo.anchor_xy[0] == pytest.approx(before - 1.0)
+
+
+def test_the_anchor_retires_once_it_is_behind_the_car():
+    """Geometry ends the carry, not a timer. Past the gate the car is in the
+    mouth and the exit corridor is the better guide -- which is what the old
+    'no carried anchor' rule was really protecting."""
+    topo = machine()
+    commit(topo)
+    topo.update(None, SHORT, travel_m=GATE_RANGE_M + 0.2)
+    assert topo.engaged
+    assert not topo.anchor_ok
+
+
+def test_a_live_sighting_refreshes_the_carried_anchor():
+    topo = machine()
+    junction = commit(topo)
+    topo.update(None, SHORT, travel_m=1.0)
+    carried = topo.anchor_xy[0]
+    topo.update(junction, GOOD)
+    assert topo.anchor_xy[0] == pytest.approx(junction.gate_for("left")[0])
+    assert topo.anchor_xy[0] != pytest.approx(carried)
+
+
+def test_the_anchor_is_the_gate_the_route_asked_for():
+    """Left and right gate midpoints sit either side of the divider, so
+    carrying the wrong one steers the car into the branch it did not choose."""
+    left = machine(("left",))
+    commit(left)
+    assert left.anchor_xy[1] > 0
+
+    right = machine(("right",))
+    commit(right)
+    assert right.anchor_xy[1] < 0
+
+
+def test_a_stalled_odometry_retires_the_anchor_on_ticks_instead():
+    """The net under the geometric test: with no measured motion the anchor is
+    never moved, so the x test can never retire it."""
+    topo = machine()
+    commit(topo)
+    for _ in range(MAX_ANCHOR_BLIND_TICKS + 1):
+        topo.update(None, SHORT, travel_m=0.0)
+    assert topo.anchor_xy[0] > 0, "still ahead -- only the tick net can end it"
+    assert not topo.anchor_ok
+
+
+def test_a_finished_manoeuvre_drops_the_anchor():
+    topo = machine()
+    commit(topo)
+    pass_gate(topo)
+    assert topo.state == FOLLOW
+    assert topo.anchor_xy is None
     assert not topo.anchor_ok
 
 

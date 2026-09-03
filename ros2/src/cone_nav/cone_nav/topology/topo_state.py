@@ -76,13 +76,30 @@ for some things and not others:
     motion. This is dead reckoning, which nothing else in this repo does; it is
     tolerable here only because it runs for a few seconds and feeds a half-plane
     with 0.2-0.4 m of slack, never a position the car steers at.
-  - The gate ANCHOR, no. It is a single point the car steers at, and a point
-    1.2 m stale is a point behind the car. So `junction_exec.junction_line` is
-    applied only on ticks where the triple was actually seen -- `anchor_ok`.
+  - The gate ANCHOR, yes -- but only once there was something honest to carry
+    it with, and only while it is still in front of the car. This entry used to
+    read "no", on the grounds that "a point 1.2 m stale is a point behind the
+    car". That was correct about a FROZEN anchor and it was the only option:
+    the sentence above it said "nothing in this repo tracks odometry", and when
+    that is true a latched point is simply wrong by however far the car has
+    driven.
 
-By the time the reds vanish the car is inside the mouth and the exit corridor is
-the better guide anyway, which is what makes dropping the anchor there safe
-rather than merely necessary.
+    `cone_perception/odometry.py` made it false. The anchor is now carried by
+    the same measured step the divider is, and `goal_stop` has been carrying
+    the trophy the same way since it was written -- bounded, on measured
+    motion, with a live sighting always winning.
+
+    Refusing it was costing the whole manoeuvre. Measured on the car
+    2026-09-02 (`data/trials/explore-4.jsonl`): across a 186-tick traverse the
+    triple was recovered on **5 ticks**, so for 181 of them there was no gate
+    to steer at and the car drove the corridor line instead -- `target_y`
+    pinned at +0.03 m while taking a branch that diverges 20 degrees. Straight
+    ahead at a junction mouth is the centre red cone, and that is what it hit.
+
+What ends the carry is geometry rather than a timer: the anchor is dropped once
+it is no longer ahead of the car, because by then the car is inside the mouth
+and the exit corridor is the better guide anyway. `MAX_ANCHOR_BLIND_TICKS` is a
+net under that, for the case where the odometry itself has stopped reporting.
 
 ## Leaving TRAVERSE
 
@@ -140,6 +157,20 @@ MIN_REACQUIRE_POINTS = 3
 # with room for the travel estimate being a duty-cycle guess.
 CLEAR_PAST_GATE_M = 0.5
 
+# A carried anchor is dropped once it is no longer this far ahead of base_link.
+# Past that the car is in the mouth, the point it would steer at is beside or
+# behind it, and the exit corridor is the better guide -- which is the same
+# reasoning the old "no carried anchor" rule rested on, kept and made
+# geometric. `pure_pursuit` would refuse a target behind the axle anyway; this
+# stops the line being threaded with a point that is merely useless first.
+MIN_ANCHOR_X_M = 0.0
+
+# A net under the geometric test above, not the thing that normally ends the
+# carry. It only bites if the odometry stops reporting, in which case the
+# carried anchor stops being moved and the x test can no longer retire it.
+# 6 s at ~10 Hz, against a mouth that takes 5-7 s at the duty floor.
+MAX_ANCHOR_BLIND_TICKS = 60
+
 # If the corridor never comes back, stop trusting a latch this old and hand
 # control back to plain corridor following without consuming a route entry.
 # 20 s at ~10 Hz -- a loose safety net, not a bound: the travel floor above is
@@ -173,7 +204,7 @@ class TopoState(object):
                  "max_traverse_ticks",
                  "_confirm", "_seen", "_traverse_ticks", "blind_ticks", "note",
                  "travelled_m", "commit_range_m", "divider_xy", "axis_rad",
-                 "_sightings")
+                 "anchor_xy", "_sightings")
 
     def __init__(self, cursor, max_traverse_ticks=MAX_TRAVERSE_TICKS):
         # The traverse safety net is a TIME bound sized for a driving car:
@@ -196,6 +227,7 @@ class TopoState(object):
         self.commit_range_m = 0.0
         self.divider_xy = None
         self.axis_rad = 0.0
+        self.anchor_xy = None
         self._sightings = []
         self._confirm = 0
         self._seen = 0
@@ -217,10 +249,14 @@ class TopoState(object):
     def anchor_ok(self):
         """May the gate midpoint be threaded into the driven line this tick?
 
-        Only on a live detection. See the module docstring: a latched anchor is
-        a point in a frame that has moved.
+        Yes while there is one and it is still ahead of the car. See the module
+        docstring: it is carried on measured motion rather than frozen, which
+        is what makes a latched anchor usable at all, and it retires on
+        geometry rather than on a timer.
         """
-        return self.engaged and self.live is not None
+        return (self.engaged and self.anchor_xy is not None
+                and self.anchor_xy[0] > MIN_ANCHOR_X_M
+                and self.blind_ticks <= MAX_ANCHOR_BLIND_TICKS)
 
     @property
     def turn(self):
@@ -234,11 +270,17 @@ class TopoState(object):
         The car went `travel_m` along its own x and turned `yaw_delta_rad`, so
         everything fixed to the ground moved the opposite way in its frame.
         """
+        cos_t, sin_t = math.cos(yaw_delta_rad), math.sin(yaw_delta_rad)
+
+        def moved(point):
+            x, y = point[0] - travel_m, point[1]
+            return (x * cos_t + y * sin_t, -x * sin_t + y * cos_t)
+
+        if self.anchor_xy is not None:
+            self.anchor_xy = moved(self.anchor_xy)
         if self.divider_xy is None:
             return
-        x, y = self.divider_xy[0] - travel_m, self.divider_xy[1]
-        cos_t, sin_t = math.cos(yaw_delta_rad), math.sin(yaw_delta_rad)
-        self.divider_xy = (x * cos_t + y * sin_t, -x * sin_t + y * cos_t)
+        self.divider_xy = moved(self.divider_xy)
         self.axis_rad -= yaw_delta_rad
 
     def update(self, junction, corridor_line=None, travel_m=0.0,
@@ -265,6 +307,10 @@ class TopoState(object):
             # A live sighting always beats a carried-forward estimate.
             self.divider_xy = (junction.centre.x, junction.centre.y)
             self.axis_rad = junction.axis_rad
+            turn = self.turn
+            if turn is not None:
+                gate = junction.gate_for(turn)
+                self.anchor_xy = (gate[0], gate[1])
 
         if self.state == FOLLOW:
             self._follow(junction)
@@ -336,6 +382,7 @@ class TopoState(object):
         self.commit_range_m = 0.0
         self.divider_xy = None
         self.axis_rad = 0.0
+        self.anchor_xy = None
 
     def __repr__(self):
         return f"TopoState({self.state}, turn={self.turn}, {self.cursor!r})"

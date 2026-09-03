@@ -185,3 +185,54 @@ def test_the_build_sheet_states_the_gate_gap_the_code_uses():
     text = open(os.path.normpath(path), encoding="utf-8").read()
     assert f"{cone_field.JUNCTION_GATE_GAP_M:.2f} m" in text
     assert f"{cone_field.JUNCTION_DIVERGENCE_DEG:.0f}" in text
+
+
+# --- driving a mouth the gate is barely visible through ------------------
+
+def _sparse_gate(keep, seed=7):
+    """Let a whole triple through on only `keep` of the ticks that had one.
+
+    The sim's detector is perfect, so without this every tick has a live gate
+    and the carried anchor is never exercised. The car does not enjoy that: on
+    2026-09-02 a 186-tick traverse recovered the triple on FIVE ticks
+    (`data/trials/explore-4.jsonl`).
+    """
+    import random
+    from cone_nav.topology import gate_detect
+
+    real = gate_detect.survey
+    rng = random.Random(seed)
+
+    def patched(*args, **kw):
+        survey = real(*args, **kw)
+        if survey.junction is not None and rng.random() > keep:
+            survey.junction = None
+            survey.reason = "fewer than three reds"
+        return survey
+
+    return real, patched
+
+
+@pytest.mark.parametrize("turn", ["left", "right"])
+def test_it_drives_the_mouth_on_a_gate_it_can_barely_see(turn):
+    """The failure this guards is the one that happened. With the anchor
+    refused on every blind tick the car had nothing to steer at for 181 of 186
+    ticks, drove the corridor line instead -- `target_y` pinned at +0.03 m
+    while taking a 20 degree branch -- and hit the centre red cone.
+
+    Carried on measured motion it has a gate to steer at throughout.
+    """
+    from sim import drive_sim
+
+    real, patched = _sparse_gate(0.05)
+    drive_sim.gate_detect.survey = patched
+    try:
+        layout = cone_field.track_junction(turn, gap=0.74)
+        result = simulate(layout, WHEELBASE, AXLE, route=[turn],
+                          max_time_s=45.0, lookahead_m=0.8, max_duty=0.05)
+    finally:
+        drive_sim.gate_detect.survey = real
+
+    assert result.stopped_at_goal, result.outcome
+    assert result.struck_cone is None, f"hit a {result.struck_cone}"
+    assert result.mean_xtrack_m < 0.10
