@@ -448,6 +448,49 @@ scp robocar:cone_capture_tool/optimal-1.jsonl data/trials/
 python analysis/map_from_log.py data/trials/optimal-1.jsonl --layout data/layouts/track_v1.csv
 ```
 
+### 7d — what it did, 2026-09-02
+
+First full exploring run, in failing evening light. Tool at `a52cf51`,
+`data/trials/explore-run-1854.jsonl`, 868 ticks / 86.6 s / 10.0 Hz, one junction
+with a walled RIGHT branch and the trophy past the LEFT one.
+
+```
+ 10.0s  follow -> approach -> traverse   turn RIGHT, gate 2.08 m
+ 27.3s  traverse -> follow               (passed)     now at `right`
+ 30.3s  DEAD END                         corridor ends 0.85 m ahead (orange wall seen)
+ 31.8s  released, carried back           re-arming in 0.49 m
+ 47.5s  follow -> approach -> traverse   turn LEFT,  gate 1.57 m
+ 53.5s  traverse -> follow               (passed)     now at `left`
+ 66.5s  goal seeking -> run_in           0.99 m
+ 68.3s  goal run_in -> stopped           0.21 m
+```
+
+It emitted `data/routes/optimal_explore_1854.txt`: **`left`** — two gates driven
+while exploring, one on the route, one detour avoided.
+
+| | value |
+|---|---|
+| whole triples recovered | 68 ticks |
+| measured gate gaps | 0.71 / 0.72 m (laid 0.72) |
+| dead end named at | 0.85 m, orange corroborating |
+| goal run-in opened | 0.99 m (`RUN_IN_M` = 1.0) |
+| stopped at | 0.21 m (`--goal-stop` 0.30, one tick of travel inside) |
+| ticks with measured odometry | 832 / 868 |
+| branch filter peak drop | 13 cones |
+
+**Read the map, not the drive.** The car physically passed a second junction on
+its way to the trophy, and the log records no third manoeuvre — it followed the
+corridor through rather than detecting a gate there. So the emitted route is
+correct for what was MAPPED (3 nodes, 2 edges, 1 dead end) and is one turn
+short of describing the course. Re-driving it reproduces the run only because
+the second junction is passed by corridor-following either way. A route file is
+a claim about the map, and the map is only as complete as the gates that armed.
+
+`min reach through the mouth 0.00 m` still reads CHECK and is expected now: the
+reach floor stands down inside a traverse, so a mouth the car can barely see is
+crawled rather than stopped in. That is the change that stopped traverses timing
+out; see `speed_ctrl.duty`'s `min_reach_m`.
+
 ### When it goes wrong
 
 | Symptom | Field to read | Likely cause |
