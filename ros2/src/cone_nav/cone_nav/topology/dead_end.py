@@ -54,9 +54,27 @@ blocked. Three things guard it, and all three are needed:
     well-placed orange is positive evidence that the missing wall is the end of
     the corridor rather than a dropout, which is the distinction this guard
     exists to draw and could not draw alone.
-  - the signal must hold for several consecutive ticks. A stopped car's scan
-    does not change, so waiting costs nothing and buys everything: this is the
-    rare state machine that can afford to be slow, and it should be.
+  - the signal must hold across a WINDOW of ticks -- a count within it, not a
+    run of consecutive ones. That distinction is the whole of this paragraph
+    and it was got wrong first time round.
+
+    Consecutive confirmation was copied from `goal_stop`, whose own docstring
+    says its sightings are "plentiful here in a way they emphatically are not
+    at a junction". A wall is the junction case. Measured 2026-09-02
+    (`data/trials/explore-7.jsonl`): 19 of 114 ticks at a wall passed every
+    geometric test, six in any ten -- and the longest CONSECUTIVE run was
+    **two**, against a rule needing five. It could not fire, ever, while the
+    evidence was plainly there. `reach` flickers 0.98, 1.33, 1.40, 1.83, 1.91,
+    0.98 as the centerline finds a longer or shorter chain, and one good tick
+    in three is what that looks like.
+
+    `topo_state` met this first and answered it the same way, for the same
+    reason -- "sightings are the scarce resource, not confidence" -- with
+    `COMMIT_WINDOW_TICKS` and a count inside it.
+
+    A stopped car's scan does not change, so waiting still costs nothing: this
+    remains the rare state machine that can afford to be slow. What it cannot
+    afford is to require a steadiness the perception does not have.
 
 ## Where this must not run
 
@@ -78,15 +96,24 @@ from cone_nav.control.speed_ctrl import MIN_REACH_M, reach_of
 CLEAR = "clear"
 DEAD_END = "dead_end"
 
-# Consecutive ticks the geometric signal must hold with an orange seen too.
-# ~0.5 s at the measured 9.9 Hz.
+# The window the evidence is counted over. 2 s at the measured 9.9 Hz -- long
+# enough to ride out the reach flicker, short enough that a wall is named while
+# the car is still short of it.
+WINDOW_TICKS = 20
+
+# Evidence ticks needed inside that window, with an orange seen too.
+#
+# Sized from measured runs rather than chosen. Peak density in any 20-tick
+# window, across every driven run of 2026-09-02: at a wall 20/20, 10/20 and
+# 9/20; in a healthy corridor **0/20 on all of them**. The geometric test
+# simply does not pass while a corridor is open, which is what makes a count
+# safe where it would otherwise invite false positives.
 CONFIRM_TICKS = 5
 
-# And without one. Longer, because the whole case for the geometric signal is
-# that it stands alone -- but a car that has already stopped is not paying for
-# the wait, and half of these ticks are a chance for the detector's 69% recall
-# to land one orange and take the faster path.
-LONE_CONFIRM_TICKS = 12
+# And without one. More, because the whole case for the geometric signal is
+# that it stands alone -- but still inside the worst measured wall density, so
+# a run where the detector never finds the orange can still name the wall.
+LONE_CONFIRM_TICKS = 8
 
 # Fewer clusters than this in view and a collapsed line is a blind car, not a
 # wall. A dead end presents its own wall plus both corridor sides.
@@ -149,14 +176,18 @@ class DeadEndLatch(object):
 
     __slots__ = ("state", "reason", "confirm", "oranges_seen", "reach_m",
                  "min_reach_m", "min_cones", "confirm_ticks",
-                 "lone_confirm_ticks", "rearm_travel_m", "_travel_since")
+                 "lone_confirm_ticks", "rearm_travel_m", "_travel_since",
+                 "window_ticks", "_window")
 
     def __init__(self, min_reach_m=MIN_REACH_M, min_cones=MIN_CONES,
                  confirm_ticks=CONFIRM_TICKS,
                  lone_confirm_ticks=LONE_CONFIRM_TICKS,
-                 rearm_travel_m=REARM_TRAVEL_M):
+                 rearm_travel_m=REARM_TRAVEL_M, window_ticks=WINDOW_TICKS):
         self.rearm_travel_m = rearm_travel_m
         self._travel_since = rearm_travel_m
+        self.window_ticks = window_ticks
+        # (evidence, orange) per tick, most recent last.
+        self._window = []
         self.min_reach_m = min_reach_m
         self.min_cones = min_cones
         self.confirm_ticks = confirm_ticks
@@ -181,6 +212,7 @@ class DeadEndLatch(object):
         self.reason = ""
         self.confirm = 0
         self.oranges_seen = 0
+        self._window = []
         self._travel_since = 0.0
 
     def update(self, line, cones, oranges=(), armed=True, origin=(0.0, 0.0),
@@ -198,15 +230,13 @@ class DeadEndLatch(object):
 
         self._travel_since += abs(travel_m)
         if self._travel_since < self.rearm_travel_m:
-            self.confirm = 0
-            self.oranges_seen = 0
+            self._clear()
             self.reason = (f"re-arming in "
                            f"{self.rearm_travel_m - self._travel_since:.2f} m")
             return self.state
 
         if not armed:
-            self.confirm = 0
-            self.oranges_seen = 0
+            self._clear()
             self.reason = "not armed"
             return self.state
 
@@ -214,15 +244,15 @@ class DeadEndLatch(object):
 
         wall = self._wall_ahead(oranges)
         blocked = self._refusal(line, cones, wall)
-        if blocked:
-            self.confirm = 0
-            self.oranges_seen = 0
-            self.reason = blocked
-            return self.state
 
-        if wall:
-            self.oranges_seen += 1
-        self.confirm += 1
+        # A refused tick is counted as evidence-against rather than wiping the
+        # window. That is the change: the reach flicker means a wall produces
+        # roughly one good tick in three, and resetting on every bad one made
+        # the count unreachable while the evidence was plainly there.
+        self._window.append((not blocked, wall))
+        del self._window[:-self.window_ticks]
+        self.confirm = sum(1 for good, _ in self._window if good)
+        self.oranges_seen = sum(1 for good, o in self._window if good and o)
 
         needed = (self.confirm_ticks if self.oranges_seen
                   else self.lone_confirm_ticks)
@@ -232,9 +262,19 @@ class DeadEndLatch(object):
                             else "no orange, geometry alone")
             self.reason = (f"corridor ends {self.reach_m:.2f} m ahead "
                            f"({corroborated})")
+        elif blocked:
+            # Say what stopped THIS tick, with the tally beside it, so the
+            # reason field still names the fault and no longer implies the
+            # count went back to zero.
+            self.reason = f"{blocked}  [{self.confirm}/{needed}]"
         else:
             self.reason = f"confirming {self.confirm}/{needed}"
         return self.state
+
+    def _clear(self):
+        self.confirm = 0
+        self.oranges_seen = 0
+        self._window = []
 
     # --- the refusals ---------------------------------------------------
 

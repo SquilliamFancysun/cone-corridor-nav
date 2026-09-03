@@ -12,6 +12,7 @@ from cone_nav.topology.dead_end import (
     CLEAR,
     DEAD_END,
     LONE_CONFIRM_TICKS,
+    WINDOW_TICKS,
     DeadEndLatch,
 )
 
@@ -78,14 +79,50 @@ def test_it_does_not_fire_while_held_down():
     assert latch.reason == "not armed"
 
 
-def test_a_one_tick_dropout_does_not_accumulate():
-    """Confirmation must be consecutive, or a flickering corridor eventually
-    adds up to a wall."""
+def test_an_isolated_dropout_does_not_accumulate():
+    """A couple of bad ticks scattered through a healthy corridor must not add
+    up to a wall.
+
+    This is the guarantee the window actually provides, and it is weaker than
+    the one consecutive confirmation gave -- deliberately. Consecutive was
+    immune to ANY flicker and could not fire on a real wall: measured
+    2026-09-02, a wall produced 19 evidence ticks in 114 with a longest
+    consecutive run of TWO, against a rule needing five.
+
+    What makes the weaker guarantee sound is that the geometric test does not
+    pass at all while a corridor is open. Peak density in any 20-tick window
+    across every driven run that day: 20/20, 10/20 and 9/20 at a wall, and
+    0/20 in the corridor on all three. The threshold sits in that gap.
+    """
     latch = DeadEndLatch()
-    for _ in range(20):
-        latch.update(FakeLine(0.3), cones(), oranges=[FakeCone()])
-        latch.update(FakeLine(2.5), cones(), oranges=[FakeCone()])
+    for i in range(40):
+        short = i % 20 == 0          # two short ticks in forty
+        latch.update(FakeLine(0.3 if short else 2.5), cones(),
+                     oranges=[FakeCone(1.0, 0.0)])
     assert latch.state == CLEAR
+
+
+def test_a_wall_seen_one_tick_in_three_still_gets_named():
+    """The failure the window exists for. `reach` flickers 0.98, 1.33, 1.40,
+    1.83, 1.91, 0.98 at a wall as the centerline finds a longer or shorter
+    chain, so the evidence never lands twice in a row."""
+    latch = DeadEndLatch()
+    for i in range(WINDOW_TICKS):
+        wall = i % 3 == 0
+        latch.update(FakeLine(0.4 if wall else 1.9), cones(),
+                     oranges=[FakeCone(1.0, 0.0)])
+    assert latch.state == DEAD_END
+
+
+def test_a_refused_tick_no_longer_wipes_the_tally():
+    """It is counted as evidence-against, not as a reset -- and the reason
+    still names the fault, with the tally beside it."""
+    latch = DeadEndLatch()
+    latch.update(FakeLine(0.4), cones(), oranges=[FakeCone(1.0, 0.0)])
+    latch.update(FakeLine(2.5), cones())
+    assert latch.confirm == 1, "the good tick survived the bad one"
+    assert "corridor reaches" in latch.reason
+    assert "[1/" in latch.reason
 
 
 # --- firing -------------------------------------------------------------
