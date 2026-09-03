@@ -458,13 +458,19 @@ def simulate(layout, wheelbase_m, rear_axle_in_base, lookahead_m=1.5,
 
         pursuit = pure_pursuit.steering_angle(
             line.points, lookahead_m, wheelbase_m, origin=rear_axle_in_base)
-        # The reach floor stands down for the goal run-in and nowhere else. Left
-        # in place it halts the car 0.64 m from the trophy -- before any stop
-        # range can trigger, and unrecoverably, since the scan does not change
-        # while the car stands still. See cone_nav/guidance/goal_stop.py.
+        # The reach floor stands down for the goal run-in and inside a
+        # TRAVERSE, and nowhere else. At the goal, left in place it halts the
+        # car 0.64 m from the trophy -- before any stop range can trigger, and
+        # unrecoverably, since the scan does not change while the car stands
+        # still. In a mouth it deadlocks the manoeuvre instead: duty goes to
+        # zero, a stopped car accrues no measured travel, and the traverse
+        # times out on a gate it drove through. Same rule, same reason, two
+        # places the car has already committed. See goal_stop.py, and keep this
+        # identical to drive_junction.drive_pipeline.
+        in_mouth = topo is not None and topo.state == topo_state.TRAVERSE
         target = speed_ctrl.duty(pursuit, line, max_duty=max_duty,
                                  origin=rear_axle_in_base,
-                                 min_reach_m=(0.0 if goal_latch.run_in
+                                 min_reach_m=(0.0 if goal_latch.run_in or in_mouth
                                               else speed_ctrl.MIN_REACH_M),
                                  min_points=1 if goal_latch.run_in else 2)
         duty_now = speed_ctrl.ramp(

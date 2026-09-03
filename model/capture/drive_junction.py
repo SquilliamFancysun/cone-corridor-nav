@@ -249,8 +249,31 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
     # before any stop range can fire, and unrecoverably, because the scan does
     # not change while the car stands still. See cone_nav/guidance/goal_stop.py.
     run_in = goal_latch is not None and goal_latch.run_in
+    # The reach floor stands down in exactly two places, and this is the second.
+    #
+    # Inside a TRAVERSE the car has already committed: the gate is latched, the
+    # turn is chosen, and `keep_branch` is cutting the other fork away. The
+    # floor's own rationale -- do not commit to a corridor you can see one
+    # metre of -- does not describe that situation, which is the identical
+    # argument `goal_stop` makes for the run-in.
+    #
+    # What it costs to leave in place is not a slower crossing, it is a
+    # deadlock. Measured 2026-09-02 (`explore-3.jsonl`): reach sat at 0.70 m
+    # through a mouth, duty went to zero, and because travel is now MEASURED by
+    # scan matching a stopped car accrues none -- so `travelled_m` never
+    # cleared the pass floor and the traverse timed out 20 s later, keeping a
+    # route entry the car had physically driven through. A stopped car cannot
+    # recover on its own here: the scan does not change while it stands still.
+    #
+    # `min_points` stays at 2. At the goal the line legitimately shrinks to the
+    # anchor alone; a one-point line in a junction mouth is a car that is
+    # confused, not one that has arrived. "no steerable target" and "centerline
+    # too short" both still stop the car, so what changes is only that a SHORT
+    # BUT REAL corridor keeps it crawling at the cogging floor.
+    in_mouth = topo is not None and topo.state == topo_state.TRAVERSE
     duty = speed_ctrl.duty(pursuit, line, max_duty=args.max_duty, origin=axle,
-                           min_reach_m=0.0 if run_in else speed_ctrl.MIN_REACH_M,
+                           min_reach_m=(0.0 if run_in or in_mouth
+                                        else speed_ctrl.MIN_REACH_M),
                            min_points=1 if run_in else 2)
     if dead_end_latch is not None:
         # On the UNANCHORED line: an anchor is a point threaded onto the driven

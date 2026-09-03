@@ -528,3 +528,85 @@ def test_an_edge_measured_across_a_lift_comes_back_unmeasured():
         at_junction, pose.snapshot()))
     assert maze.neighbours(maze.root)[0].length_m is None
     assert "unmeasured" in maze.summary()
+
+
+# --- the reach floor inside a mouth -------------------------------------
+
+def _pipeline_duty_kwargs(state, monkeypatch):
+    """Run drive_pipeline with topo forced into `state`, and capture what it
+    asked speed_ctrl.duty for. Patching the call is the only way to see the
+    argument: the returned DutyResult cannot say which floor produced it."""
+    from cone_nav.control import speed_ctrl
+    from cone_perception.geometry import intrinsics_from_hfov
+    from sim import cone_field
+    from sim.drive_sim import CLASS_IDS, PREVIEW_H, PREVIEW_W
+
+    layout = cone_field.track_junction("left")
+    local = cone_field.cones_in_car_frame(layout, cone_field.Pose(0.6, 0.0, 0.0))
+    intr = intrinsics_from_hfov(PREVIEW_W, PREVIEW_H)
+
+    class Set(object):
+        def __init__(self, d):
+            self.detections = d
+
+        def age(self, _now):
+            return 0.0
+
+    seen = {}
+    real = speed_ctrl.duty
+
+    def spy(*args, **kw):
+        seen.update(kw)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(drive_junction.speed_ctrl, "duty", spy)
+    topo = topo_state.TopoState(ExplorePolicy())
+    topo.state = state
+    drive_junction.drive_pipeline(
+        cone_field.synth_scan(local),
+        Set(cone_field.synth_detections(local, intr, CLASS_IDS)),
+        cone_field.IDENTITY_CALIBRATION, intr, Args(), 0.0, topo=topo)
+    return seen
+
+
+def test_the_reach_floor_stands_down_inside_a_traverse(monkeypatch):
+    """Measured 2026-09-02 (`explore-3.jsonl`): reach sat at 0.70 m through a
+    mouth, duty went to zero, and because travel is MEASURED a stopped car
+    accrues none -- so travelled_m never cleared the pass floor and the
+    traverse timed out on a gate the car had physically driven through. A
+    stopped car cannot recover there; the scan does not change."""
+    kw = _pipeline_duty_kwargs(topo_state.TRAVERSE, monkeypatch)
+    assert kw["min_reach_m"] == 0.0
+
+
+def test_it_does_not_stand_down_while_merely_following(monkeypatch):
+    """The rule's rationale -- do not commit to a corridor you can see a metre
+    of -- still describes a car that has not committed to anything."""
+    from cone_nav.control import speed_ctrl
+    kw = _pipeline_duty_kwargs(topo_state.FOLLOW, monkeypatch)
+    assert kw["min_reach_m"] == speed_ctrl.MIN_REACH_M
+
+
+def test_a_one_point_line_still_stops_the_car_in_a_mouth(monkeypatch):
+    """goal_stop also drops min_points to 1, because at the goal the line
+    legitimately shrinks to the anchor alone. A one-point line in a junction
+    mouth is a car that is confused, not one that has arrived."""
+    kw = _pipeline_duty_kwargs(topo_state.TRAVERSE, monkeypatch)
+    assert kw["min_points"] == 2
+
+
+def test_standing_the_floor_down_does_not_disarm_the_other_two_refusals():
+    """What changes is only that a SHORT BUT REAL corridor keeps the car
+    crawling. A car that sees nothing must still stop."""
+    from cone_nav.control import speed_ctrl
+
+    class Empty(object):
+        points = []
+        single_boundary_fallback = False
+
+    class Pursuit(object):
+        normalised = 0.1
+        delta_rad = 0.05
+
+    assert speed_ctrl.duty(Pursuit(), Empty(), min_reach_m=0.0).duty == 0.0
+    assert speed_ctrl.duty(None, Empty(), min_reach_m=0.0).duty == 0.0
