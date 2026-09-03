@@ -73,6 +73,7 @@ from cone_nav.guidance.route_exec import RouteCursor, load_route
 from cone_nav.topology import (dead_end, gate_detect, goal_detect,
                                graph_builder, topo_state)
 from cone_perception import (clustering, ego_motion, extrinsics, fusion,
+                             geometry,
                              label_memory, odometry)
 from drive_corridor import (
     DEFAULT_PORT_WS,
@@ -119,6 +120,7 @@ JUNCTION_STATUS_SCHEMA = {
         pose_yaw_deg={"type": "number"},
         pose_measured={"type": "integer", "description": "ticks the pose was advanced by a real measurement. Below `t`*rate means the run has blind stretches in it"},
         pose_jumps={"type": "integer", "description": "declared lifts. Anything measured across one is in a different frame and comes back unmeasured"},
+        boxes={"type": "string", "description": "this tick's CAMERA boxes as class,bearing_deg,confidence;... -- the inputs fusion chose between. cones_xy records what it decided; without these a cluster that came back the wrong colour cannot be diagnosed"},
         cones_xy={"type": "string", "description": "this tick's cones in base_link as x,y,class;... -- what analysis/map_from_log.py turns into a map. Pre-fill and pre-branch-filter, the same list the odometry is fitted on"},
         dead_end_state={"type": "string", "description": "clear / dead_end"},
         dead_end_reason={"type": "string", "description": "why the corridor is or is not judged to have ended. The first field to read when a backtrack fires or fails to"},
@@ -1070,6 +1072,16 @@ def main(argv=None):
             # exactly the cones a junction is made of. ~14 bytes a cone, so a
             # 600-tick run grows by a few hundred KB against a log already
             # half a megabyte.
+            # The camera side of the same tick. `cones_xy` records what fusion
+            # DECIDED; without the boxes it was deciding between, a cluster
+            # that came back the wrong colour cannot be diagnosed -- which box
+            # claimed it, and how far off in bearing it was, are exactly the
+            # two numbers missing. Bearing in the CAMERA frame, degrees, left
+            # positive, so it lines up with a cluster's own bearing.
+            status["boxes"] = ";".join(
+                f"{d.cls},{math.degrees(geometry.detection_bearing(d, intr)):.1f}"
+                f",{d.confidence:.2f}"
+                for d in (detection_set.detections if detection_set else ()))
             status["cones_xy"] = ";".join(
                 f"{c.x:.3f},{c.y:.3f},{c.cone_class}" for c in result.cones)
             status["odo_forward_m"] = round(odo_step.forward_m, 4) if odo_step else 0.0
