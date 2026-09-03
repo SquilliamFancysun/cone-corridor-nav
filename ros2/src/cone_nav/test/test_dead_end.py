@@ -257,3 +257,37 @@ def test_a_rejected_orange_only_costs_time_not_the_wall():
     assert run(latch, LONE_CONFIRM_TICKS, FakeLine(0.4),
                oranges=[FakeCone(1.0, -0.75)]) == DEAD_END
     assert "geometry alone" in latch.reason
+
+
+def test_a_well_placed_orange_beats_the_single_boundary_refusal():
+    """Measured 2026-09-02 (`explore-6.jsonl`): an orange was present on 110 of
+    110 ticks at a wall, within 4 cm of the centreline, and 63 of those ticks
+    were refused as a fallback. A car at a dead end is close and angled, so one
+    boundary legitimately leaves the arc -- it has arrived, not got confused."""
+    latch = DeadEndLatch()
+    assert run(latch, 6, FakeLine(0.4, fallback=True),
+               oranges=[FakeCone(1.0, 0.05)]) == DEAD_END
+
+
+def test_a_fallback_with_no_orange_is_still_refused():
+    """The guard still does its original job. Without positive evidence, a
+    one-sided line is a confused car."""
+    latch = DeadEndLatch()
+    assert run(latch, 60, FakeLine(0.4, fallback=True)) == CLEAR
+    assert "no orange to say otherwise" in latch.reason
+
+
+def test_a_misplaced_orange_does_not_rescue_a_fallback():
+    """The exception rides on the SAME position test as the corroboration, so
+    a misread yellow at the corridor wall cannot buy it either."""
+    latch = DeadEndLatch()
+    assert run(latch, 60, FakeLine(0.4, fallback=True),
+               oranges=[FakeCone(1.0, -0.75)]) == CLEAR
+
+
+def test_an_orange_cannot_rescue_a_collapsed_line():
+    """Zero points is the absence of a corridor, not one that stopped short.
+    No amount of orange makes "ends 0.00 m ahead" mean something."""
+    latch = DeadEndLatch()
+    assert run(latch, 60, FakeLine(0), oranges=[FakeCone(1.0, 0.0)]) == CLEAR
+    assert "collapsed" in latch.reason

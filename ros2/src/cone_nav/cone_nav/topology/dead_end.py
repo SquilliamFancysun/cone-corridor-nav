@@ -43,7 +43,17 @@ blocked. Three things guard it, and all three are needed:
     not catch this: measured 2026-09-02 (`explore-3.jsonl`), plenty of clusters
     were in view and the pairing still produced nothing.
   - a single-boundary fallback line is what the car produces while it is
-    confused about one wall, which is a description of a dropout. Refused.
+    confused about one wall, which is a description of a dropout. Refused --
+    **unless an orange says otherwise**. That exception is not a softening, it
+    is the correction to an over-strict rule. A car at a dead end is close to
+    the wall and usually angled, so one boundary legitimately leaves the usable
+    arc: it has ARRIVED, not got confused. Measured 2026-09-02
+    (`data/trials/explore-6.jsonl`): an orange was present on 110 of 110 ticks
+    at a wall, tracking smoothly from 1.44 m to 0.81 m and sitting within 4 cm
+    of the centreline -- and 63 of those ticks were refused as a fallback. A
+    well-placed orange is positive evidence that the missing wall is the end of
+    the corridor rather than a dropout, which is the distinction this guard
+    exists to draw and could not draw alone.
   - the signal must hold for several consecutive ticks. A stopped car's scan
     does not change, so waiting costs nothing and buys everything: this is the
     rare state machine that can afford to be slow, and it should be.
@@ -202,14 +212,15 @@ class DeadEndLatch(object):
 
         self.reach_m = reach_of(line, origin) if line is not None else 0.0
 
-        blocked = self._refusal(line, cones)
+        wall = self._wall_ahead(oranges)
+        blocked = self._refusal(line, cones, wall)
         if blocked:
             self.confirm = 0
             self.oranges_seen = 0
             self.reason = blocked
             return self.state
 
-        if self._wall_ahead(oranges):
+        if wall:
             self.oranges_seen += 1
         self.confirm += 1
 
@@ -227,21 +238,33 @@ class DeadEndLatch(object):
 
     # --- the refusals ---------------------------------------------------
 
-    def _refusal(self, line, cones):
-        """Why this tick is not evidence of a wall, or "" if it is."""
+    def _refusal(self, line, cones, wall=False):
+        """Why this tick is not evidence of a wall, or "" if it is.
+
+        `wall` is whether an orange sits where the end of this corridor would
+        be. It buys exactly one refusal -- see the fallback below.
+        """
         if line is None:
             return "no line"
         if len(cones) < self.min_cones:
             # The dropout case. A wall is made of cones; a blind car is not.
             return f"only {len(cones)} cones in view"
+        # No exception here, deliberately. Zero points is not a corridor that
+        # stopped short, it is the absence of one, and `reach` then reads "ends
+        # 0.00 m ahead" -- a contradiction that already went out as a decision
+        # once today. An orange cannot make that mean anything, so it does not
+        # get to.
         if len(line.points) < 2:
             # A wall is a corridor that stops short, so a corridor still has to
             # be there to have stopped. No points is the pairing failing, and
             # it reports as "ends 0.00 m ahead" -- which is what fired twice on
             # 2026-09-02 in place of the real wall a metre further on.
             return f"line collapsed to {len(line.points)} point(s)"
-        if line.single_boundary_fallback:
-            return "single-boundary fallback"
+        if line.single_boundary_fallback and not wall:
+            # See the module docstring. The guard is right about a dropout and
+            # wrong about an arrival, and a well-placed orange is what tells
+            # them apart. With no orange it still refuses.
+            return "single-boundary fallback, and no orange to say otherwise"
         if self.reach_m >= self.min_reach_m:
             return f"corridor reaches {self.reach_m:.2f} m"
         return ""
