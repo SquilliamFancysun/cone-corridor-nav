@@ -575,16 +575,121 @@ rather than in the VESC, and the log is the place to look.
 twice the cogging floor and refuses a negative — the sign belongs to
 `speed_ctrl.reverse_duty` and nowhere else.
 
-### 8b — straight-line reverse *(floor, no cones)*
+### 8b — straight-line reverse *(floor, landmark cones ahead, clear floor behind)*
 
-Same command, wheels down, 2–3 m of clear floor, `--log`. What to read out:
+Same command, wheels down, 2–3 m of clear floor BEHIND the car, `--log`.
+
+**Lay landmark cones ahead of the car.** The stage said "no cones" until 2026-09-03,
+and two of the four readouts below cannot be taken that way: `ego_motion` is
+scan-to-scan odometry over cone clusters, a step needs two scans with at least
+one cone in common, and an empty scene returns None. On a bare floor `odo_pairs`
+is 0 every tick and `odo_forward_m` is 0.0 — the run looks healthy and measures
+nothing. The car reverses AWAY from cones placed ahead of it, so they stay in the
+forward ~218 deg it can see while the rear arc stays empty, which is what "no
+cones" was protecting. Space them well clear of `ego_motion.MATCH_GATE_M` (0.35 m)
+and keep them inside `--max-range` at the END of the reverse: the first run to try
+this had the cones too close together and the fit never locked (60% of ticks
+disagreed with the direction of travel).
+
+What to read out:
 
 | | Where | Why it matters |
 |---|---|---|
 | **Does it move at 0.05 from a standstill?** | your eyes | The real question of the day. Manual reverse ran at 0.10 and usually already rolling; this is half that, from rest, on carpet or asphalt rather than a stand. Sweep `--max-reverse-duty` up until it breaks away reliably and **record what it took** — if it needs 0.08, that goes back into the gains, because `reverse_ctrl`'s loop stiffens with speed |
-| **Reverse m/s** | `odo_forward_m`, **negative** | Settles a live contradiction, not just a missing number. The floor duty 0.05 against a forward-fitted `DUTY_TO_MPS` of 7.5 implies **0.375 m/s**, and `reverse_ctrl.MAX_REVERSE_MPS` says the gains have never been checked above **0.3**. No duty satisfies both — nothing can be commanded under the cogging floor — so the tool says so at startup and this measurement is what resolves it. `DUTY_TO_MPS` is much the weakest of the three |
+| **Reverse m/s** | a TAPE and the armed tick count | Settles a live contradiction, not just a missing number. The floor duty 0.05 against a forward-fitted `DUTY_TO_MPS` of 7.5 implies **0.375 m/s**, and `reverse_ctrl.MAX_REVERSE_MPS` says the gains have never been checked above **0.3**. No duty satisfies both — nothing can be commanded under the cogging floor — so the tool says so at startup and this measurement is what resolves it. `DUTY_TO_MPS` is much the weakest of the three. Measure it with a tape — mark the start, hold X, mark the end, divide by armed ticks / 10 Hz — and use summed `odo_forward_m` only as a cross-check: on this car it under-read the reverse by 12-28%, see below |
 | Does it track straight or crab? | the floor | Slop and servo trim show here and nowhere else |
 | **Does odometry survive?** | `odo_pairs` > 0 | `rigid_step` is sign-agnostic and 0.04 m/tick is well inside the 0.35 m match gate, so it should — and the manoeuvre's distance bound depends on it |
+
+### 8b — what it did, 2026-09-03
+
+Stage 8a first, on a stand: the wheels turned backwards at 0.05 duty and stopped
+on release, through the real `VescDriver` (`data/trials/rev-8a.jsonl`). The VESC
+takes a negative duty from this tool. That question is closed.
+
+Then four floor runs, and the first of them found a fault that had nothing to do
+with reverse. `data/trials/rev-8b.jsonl`: the car backed 120 in but arrived 40 in
+to the RIGHT, an arc of radius 5.08 m, 36.9 deg of heading change over 3.05 m —
+**with the servo commanded to dead centre on every one of 291 ticks**
+(`servo_for(0.0)` is `0.5` whatever `--invert-steering` says). That is a 3.72 deg
+mechanical bias at commanded centre: 19% of `MAX_STEER_RAD` spent holding
+straight, and 2.42 m of drift over the manoeuvre's own 5.18 m bound, which is
+wider than the corridor. The steering was adjusted mechanically before the next
+run. Its odometry is also not to be trusted — the cones were too close together
+and 40% of ticks disagreed with the direction of travel; the tape is the only
+measurement from that run worth keeping.
+
+Three runs after the adjustment, cones respaced:
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| log in `data/trials/` | `rev-8b-run1-105in.jsonl` | `rev-8b-run2-118in.jsonl` | `rev-8b-run3-115in.jsonl` |
+| tape | 105 in / 2.667 m | 118 in / 2.997 m | 115 in / 2.921 m |
+| armed | 6.02 s | 6.57 s | 6.48 s |
+| summed `odo_forward_m`, whole log | −2.084 m | −2.152 m | −2.566 m |
+| odometry under-read | 22% | 28% | 12% |
+| **speed** | 0.408 m/s | 0.435 m/s | 0.428 m/s |
+| yaw over the run | +1.8 deg | **−12.3 deg** | +0.8 deg |
+
+**Settled: the reverse runs at 0.423 m/s, sd 0.014** — three runs, a 3% spread,
+measured by tape over the clock and so independent of the odometry. That gives a
+reverse-side `DUTY_TO_MPS` of **8.5 ± 0.3** against the 7.5 fitted forward, and it
+resolves the contradiction `speed_ctrl.reverse_mps` and the startup banner have
+been stating all along — against us. The reverse is **1.41x
+`reverse_ctrl.MAX_REVERSE_MPS`**, the speed above which the gains have never been
+checked, and no duty can bring it down because 0.05 is already the cogging floor.
+
+The steering fix worked: two of the three runs held within 2 deg of straight, and
+median per-tick lateral error fell from 0.0395 m to 0.0075 m.
+
+### What stage 8b leaves open — future work
+
+Four things, in the order they block the rest of stage 8.
+
+**1. The backout's distance bound is longer than the code believes.** Scan-matched
+odometry under-read the reverse by 12%, 22% and 28% on three runs of the same
+course at the same duty — a mean of 21% with a standard deviation of 10 points.
+It is not a scale factor and cannot be corrected by one. `BackoutManoeuvre` bounds
+its reverse on travelled distance, so the car runs 14-39% past the bound it thinks
+it has, in the one direction it cannot see. **The manoeuvre should not be trusted
+on a track until this is closed**, which is why 8e and 8f did not run on
+2026-09-03.
+
+The fix worth trying first: for the reverse specifically, the clock is a better
+odometer than the scan matcher. The manoeuvre commands a CONSTANT duty and that
+duty's speed is now known to 3%, so `elapsed x 0.423` estimates travel better than
+`ego_motion` does going backwards. Taking the LARGER of the two — `max(odo_travel,
+elapsed x 0.423)` — is the conservative choice for a bound, stops the car sooner,
+and leaves forward driving untouched.
+
+**2. The gains are 1.41x out of envelope.** `K_HEADING`/`K_CROSS` = 2.4/0.3 were
+swept in sim on 2026-09-02 at `DUTY_TO_MPS` 7.5, which propels `sim/drive_sim.py`
+at 0.375 m/s (`speed = duty_now * DUTY_TO_MPS`). The car does 0.423. Neighbouring
+cells in that sweep FAIL, and `reverse_ctrl`'s docstring is explicit that a pair
+which tracks at 0.2 m/s can oscillate into a wall at 0.5. Re-sweep the sim at the
+measured speed before 8d, then settle the gains on the car.
+
+**3. Run 2's −12.3 deg is not explained.** Two runs under 2 deg and one an order of
+magnitude worse, same command, same course, minutes apart. Extrapolated over the
+5.18 m bound that is roughly 0.6 m of lateral error against nearly none. Until it
+is understood, drift over a full backout is not predictable.
+
+**4. The coast is not near-zero in reverse, and is not yet measured.** 0.18 m mean
+with a 0.079 m standard deviation across the three runs, and only measurable
+through the same odometry that under-reads. `--goal-stop`'s 0.30 m default rests on
+"the near-zero coast measured on this car", which was measured FORWARD. The
+arrival band is about 0.5 m deep, so a reverse that coasts 0.18-0.26 m after
+deciding it has arrived spends a third to a half of that band. Measure it properly:
+mark the floor at the instant X is released, and measure that mark against where
+the car comes to rest.
+
+**A logging defect found on the way.** `drive_junction.py` passes the drive
+pipeline's forward duty suggestion to `status_of`, not `duty_now` — the value the
+VESC is actually given. Forward the two converge through `speed_ctrl.ramp` and the
+difference has never mattered; in a reverse they differ in SIGN, and the 8b logs
+record a positive `duty` for a car that was commanded negative. A backout analysed
+from its log will read a forward duty for a reversing car. The fix is a separate
+`duty_commanded` field rather than redefining `duty`, so `junction_report.py` and
+every existing log keep their meaning.
 
 ### 8c — reverse steering sign *(stand, wheels off the ground)*
 
@@ -655,7 +760,11 @@ glance. In sim the manoeuvre uses 74–78% of its bound; a run that finishes nea
 ### What it did in sim, 2026-09-02
 
 Both mirror layouts of `junction-*-blocked`, rear 142° masked, gains 2.4/0.3.
-**This is a simulation and no part of it has met a car.**
+**This is a simulation, and as of 2026-09-03 the MANOEUVRE has still not met a
+car.** 8a and 8b have: the VESC reverses on a negative duty from this tool, and
+the reverse runs at 0.423 m/s. Everything below was produced at 0.375, and every
+row of it is a claim about a controller that has never regulated a real corridor
+backwards.
 
 | | LEFT-blocked | RIGHT-blocked |
 |---|---|---|
