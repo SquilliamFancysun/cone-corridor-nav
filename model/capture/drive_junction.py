@@ -333,7 +333,13 @@ def drive_pipeline(scan, detection_set, calibration, intr, args, now,
                           armed=not engaged and not backing_out,
                           travel_m=travel_m, yaw_delta_rad=yaw_delta_rad)
 
-    if dead_end_latch is not None:
+    # `--wall-arrival-only` drops the geometric path and leaves the
+    # arrival path alone: `wall_latch` still runs above and still calls
+    # `dead_end_latch.force()`, so the latch object stays live and
+    # everything downstream is unchanged. Skipping `update` rather than
+    # passing `armed=False` because a held-down latch still counts
+    # travel and still writes a reason, and this is meant to be off.
+    if dead_end_latch is not None and not args.wall_arrival_only:
         # On the UNANCHORED line: an anchor is a point threaded onto the driven
         # line, so judging reach from `line` would credit the corridor with a
         # gate or a trophy it does not contain. Held down wherever the corridor
@@ -489,6 +495,18 @@ def parse_args(argv=None):
                              "Same default as --goal-stop; raise it if the "
                              "car ends up crowded among the wall cones with "
                              "no room to back out")
+    parser.add_argument("--wall-arrival-only", action="store_true",
+                        help="name a dead end ONLY by driving up to an orange, "
+                             "never from the corridor running out. Turns off "
+                             "the geometric latch entirely, leaving the same "
+                             "machinery the goal uses -- one cone, on the "
+                             "corridor axis, in arm range, driven at and "
+                             "stopped short of. Costs the walls whose orange "
+                             "the detector misses (0.687 recall on v3): those "
+                             "stop the car on the reach floor and name "
+                             "nothing, so no dead_end(), no map entry, no "
+                             "backout. Use it when geometry is firing in open "
+                             "corridor and a missed wall is the cheaper fault")
     parser.add_argument("--goal-anywhere", action="store_true",
                         help="arm the goal stop even while the route still has "
                              "turns left. FOR BRING-UP on a corridor with no "
