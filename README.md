@@ -46,12 +46,13 @@ Zero goal hops, zero blind ticks, duty held at 0.050.
 
 ### A full autonomous exploring run — `explore-run-1854.jsonl`
 
-[![Watch the exploring run](docs/media/explore-run-poster.jpg)](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/download/video-v1/explore-run-demo.mp4)
+<video src="https://github.com/user-attachments/assets/367e3be7-fe15-49c6-ada4-b59914b98a03" poster="docs/media/explore-run-poster.jpg" controls></video>
 
-*Click for the full 63-second run. The operator walks alongside holding the
-deadman — releasing it stops the car — and carries it back when it names a dead
-end, which is what stage 7b requires. Footage of the two-junction provided route
-is on the [same release](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/tag/video-v1).*
+*The full 63-second run. The operator walks alongside holding the deadman —
+releasing it stops the car — and carries it back when it names a dead end,
+which is what stage 7b requires. If the player does not load, the same file is
+on the [`video-v1` Release](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/tag/video-v1),
+along with [footage of the two-junction provided route](https://github.com/user-attachments/assets/31430fbf-ba58-4b5e-878e-98231733a4e8).*
 
 868 ticks / 86.6 s, in failing evening light. The car chose RIGHT at the
 junction, drove into a dead end and **named it itself** at 30.3 s — *"corridor
