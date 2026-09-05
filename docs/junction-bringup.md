@@ -28,7 +28,7 @@ anything is allowed to move. Do not skip to stage 5 because the sim is green.
 ## Stage 0 — at the desk
 
 ```sh
-uv run --with pytest --with numpy python -m pytest -q      # 712 pass
+uv run --with pytest --with numpy python -m pytest -q      # 741 pass, 2 skip
 uv run --with pytest --with numpy python -m pytest sim -q  # 76 pass, 3 known fails
 
 PYTHONPATH=src:model/capture:. \
@@ -212,10 +212,14 @@ Keyed on the log, in the order worth checking.
 
 ### The one number likely to need fitting
 
-`speed_ctrl.DUTY_TO_MPS = 12.0` was fitted to nothing. It converts commanded
-duty into the travelled distance `topo_state` uses as the floor for deciding a
-gate is behind the car. Too high and manoeuvres end early; too low and they
-overrun into the timeout.
+`speed_ctrl.DUTY_TO_MPS` shipped at 12.0, fitted to nothing. It converts
+commanded duty into the travelled distance `topo_state` uses as the floor for
+deciding a gate is behind the car. Too high and manoeuvres end early; too low
+and they overrun into the timeout.
+
+It now reads **7.5**, fitted from the first powered run on 2026-09-01 as
+described below. The reverse direction wants 8.5 ± 0.3 instead, which is one of
+the open items in stage 8.
 
 Fit it from the first driven run: take `travelled_m` at the `passed` note and
 compare against the distance actually covered from commit to clear. Scale the
