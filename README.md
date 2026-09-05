@@ -17,6 +17,19 @@ magenta trophy.
 The original proposal scoped autonomous route planning as a nice-to-have and
 the provided route as the baseline. Both were built, and both were driven.
 
+## The team
+
+| | |
+|---|---|
+| Richard Thatcher | MAE |
+| Max Tsai | MAE |
+| Eli Carsenti | ECE |
+
+The commit history is not a measure of who did what. Building the track,
+surveying it, driving the car, reading a tape and adjusting a servo by hand
+leave no trace in git, and they are most of what this project consisted of —
+see [`docs/ai-usage.md`](docs/ai-usage.md).
+
 ---
 
 ## What the car did, on the car
