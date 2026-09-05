@@ -46,6 +46,13 @@ Zero goal hops, zero blind ticks, duty held at 0.050.
 
 ### A full autonomous exploring run — `explore-run-1854.jsonl`
 
+[![Watch the exploring run](docs/media/explore-run-poster.jpg)](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/download/video-v1/explore-run-demo.mp4)
+
+*Click for the full 63-second run. The operator walks alongside holding the
+deadman — releasing it stops the car — and carries it back when it names a dead
+end, which is what stage 7b requires. Footage of the two-junction provided route
+is on the [same release](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/tag/video-v1).*
+
 868 ticks / 86.6 s, in failing evening light. The car chose RIGHT at the
 junction, drove into a dead end and **named it itself** at 30.3 s — *"corridor
 ends 0.85 m ahead (orange wall seen)"* — was carried back and re-armed, took the
@@ -260,6 +267,8 @@ usable forward arc of ~218° — measured, not assumed.
 - **Driving audio** (`model/capture/audio/`) — 7 MB of mp3 on the `audio-v1`
   Release; `deploy.sh` fetches it onto the car. The code that plays it IS in git.
 - **Rosbags** (`*.db3`, `*.mcap`) — trial logs and analysis outputs ARE in git.
+- **Demo video** — 720p H.264 on the `video-v1` Release. The still frames used
+  on this page ARE in git, at `docs/media/`.
 
 Tags worth knowing: `demo-v1` pins the code and weights of the goal run,
 `weights-v3` the deployed detector, and 14 `deploy/*` tags pin exactly what was
