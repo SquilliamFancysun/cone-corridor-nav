@@ -118,7 +118,7 @@ for pkg in cone_perception cone_nav; do
   rsync -av \
     --exclude='__pycache__' \
     --exclude='test' \
-    "$REPO/ros2/src/$pkg/$pkg/" "$HOST:cone_capture_tool/$pkg/"
+    "$REPO/src/$pkg/" "$HOST:cone_capture_tool/$pkg/"
 done
 
 # drive_junction.py is useless without a route file, and routes live in the

@@ -48,10 +48,9 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if not os.path.isdir(os.path.join(_HERE, "cone_perception")):
     _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
-    for _pkg in ("cone_perception", "cone_nav"):
-        _src = os.path.join(_REPO, "ros2", "src", _pkg)
-        if os.path.isdir(_src) and _src not in sys.path:
-            sys.path.insert(0, _src)
+    _src = os.path.join(_REPO, "src")
+    if os.path.isdir(_src) and _src not in sys.path:
+        sys.path.insert(0, _src)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
@@ -442,7 +441,7 @@ def require_vehicle_geometry():
         raise SystemExit(
             "error: the vehicle geometry has never been measured.\n" + lines +
             "\n\n       Take a tape to the car and record both in\n"
-            "       ros2/src/cone_perception/cone_perception/extrinsics.py:\n"
+            "       src/cone_perception/extrinsics.py:\n"
             "         REAR_AXLE_IN_BASE = (x, y, z)  # rear axle in base_link;\n"
             "                                        # base_link is AT THE LIDAR,\n"
             "                                        # so x is negative\n"

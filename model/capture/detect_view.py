@@ -32,13 +32,12 @@ import time
 from contextlib import ExitStack
 
 # On the car everything sits in one directory: deploy.sh drops cone_perception/
-# beside this file. In a git checkout it lives under ros2/src/, and --frames is
+# beside this file. In a git checkout it lives under src/, and --frames is
 # meant to be run at a desk, so find it there too rather than making the tool
 # car-only.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if not os.path.isdir(os.path.join(_HERE, "cone_perception")):
-    _SRC = os.path.normpath(os.path.join(_HERE, "..", "..", "ros2", "src",
-                                         "cone_perception"))
+    _SRC = os.path.normpath(os.path.join(_HERE, "..", "..", "src"))
     if os.path.isdir(_SRC) and _SRC not in sys.path:
         sys.path.insert(0, _SRC)
 if _HERE not in sys.path:

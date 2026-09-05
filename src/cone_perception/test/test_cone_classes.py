@@ -17,8 +17,8 @@ import pytest
 from cone_perception import cone_classes
 
 _REPO = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
-_MSG = os.path.join(_REPO, "ros2", "src", "cone_msgs", "msg", "LabeledCone.msg")
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+_MSG = os.path.join(_REPO, "src", "cone_msgs", "msg", "LabeledCone.msg")
 
 
 def _model_cone_classes():

@@ -50,10 +50,9 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.normpath(os.path.join(_HERE, ".."))
-for _pkg in ("cone_perception", "cone_nav"):
-    _src = os.path.join(_REPO, "ros2", "src", _pkg)
-    if os.path.isdir(_src) and _src not in sys.path:
-        sys.path.insert(0, _src)
+_src = os.path.join(_REPO, "src")
+if os.path.isdir(_src) and _src not in sys.path:
+    sys.path.insert(0, _src)
 
 from cone_perception import ego_motion, odometry
 from cone_perception.cone_classes import CLASS_NAMES, UNLABELED, name_of

@@ -58,7 +58,7 @@ def test_a_typo_is_not_silently_skipped():
 
 def test_the_shipped_route_file_loads():
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "..", "..", "..", "data", "routes",
+                        "..", "..", "..", "data", "routes",
                         "route_v1.txt")
     assert load_route(os.path.normpath(path)) == [LEFT, RIGHT]
 

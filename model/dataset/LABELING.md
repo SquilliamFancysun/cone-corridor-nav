@@ -162,8 +162,9 @@ upload `best.pt`, select YOLOv8 detection, `imgsz=640`, **6 SHAVEs**. It strips
 the detection head into the DepthAI `YoloDetectionNetwork` form and returns the
 `.blob` plus a JSON of anchors/masks/classes.
 
-Commit that JSON to `model/export/` — `yolo_node.py` needs it at runtime and it
-is small. Export at 416 as well and benchmark both on-car: the OAK-D here
+Commit that JSON to `model/export/` — a DepthAI runtime needs it alongside the
+`.blob`, and it is small. (Neither was produced: the car ran the detector in
+PyTorch instead, and `model/export/` is empty.) Export at 416 as well and benchmark both on-car: the OAK-D here
 negotiates USB 2.0, so 640 may be too slow for the control loop. That
 measurement belongs in the D3 perception characterization.
 

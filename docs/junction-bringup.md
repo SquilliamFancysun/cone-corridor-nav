@@ -31,7 +31,7 @@ anything is allowed to move. Do not skip to stage 5 because the sim is green.
 uv run --with pytest --with numpy python -m pytest -q      # 712 pass
 uv run --with pytest --with numpy python -m pytest sim -q  # 76 pass, 3 known fails
 
-PYTHONPATH=ros2/src/cone_perception:ros2/src/cone_nav:model/capture:. \
+PYTHONPATH=src:model/capture:. \
   uv run --with numpy python -m sim.drive_sim \
     --track junction-left --route data/routes/junction_left.txt
 ```

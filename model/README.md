@@ -1,7 +1,7 @@
 # CV Model Development
 
 Everything about the cone detector that happens **off-car**. The on-car runtime
-(DepthAI spatial detection node) lives in `ros2/src/cone_perception/`.
+is `model/capture/drive_junction.py` plus the pure packages in `src/`.
 
 ## Layout
 
@@ -27,12 +27,12 @@ export/      .pt -> ONNX -> OAK-D .blob conversion scripts
 ```
 
 `capture/` runs on the Pi but produces a dataset, so it lives here with the rest
-of D1 rather than in `ros2/src/`. It deliberately does not use ROS: the dataset
-is an off-car deliverable, and rosbag round-tripping would add a lossy re-encode
+of D1 rather than under `src/`. It deliberately does not use ROS: the dataset is
+an off-car deliverable, and rosbag round-tripping would add a lossy re-encode
 for no benefit. Its DepthAI pipeline is the reference camera configuration that
-`cone_perception/yolo_node.py` should mirror at inference time — if capture and
-inference disagree on white balance, the detector sees different colors than it
-trained on.
+the on-car detector mirrors at inference time — if capture and inference
+disagree on white balance, the detector sees different colors than it trained
+on.
 
 ## Off-car environment
 

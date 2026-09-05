@@ -258,7 +258,7 @@ An earlier version of this note said `LIDAR_LOWER_LIMIT = 90` /
 which globs `/dev/ttyUSB*` and speaks the RPLidar protocol — it could not read
 an LD06 if it were enabled. They would not fit this mount either: 90–270 keeps
 half the chassis arc and discards clear world. **The masking has to happen in
-our own code**, in `cone_perception/lidar_cluster.py`, against the measured arc
+our own code**, in `cone_perception/clustering.py`, against the measured arc
 above. _Tell:_ re-run `--calibrate` after any remount; the arc is reported every
 time and lands in `calibration.json`.
 

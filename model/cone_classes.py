@@ -20,7 +20,7 @@ import re
 
 REPO_MSG_PATH = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "ros2", "src", "cone_msgs", "msg", "LabeledCone.msg",
+    "..", "src", "cone_msgs", "msg", "LabeledCone.msg",
 ))
 
 # Mirrors capture/session.py. Used only when the .msg is out of reach — a Colab

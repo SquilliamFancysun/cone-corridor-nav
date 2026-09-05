@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+.ruff_cache/
 
 # ROS2 build products (build inside the container, never commit)
 build/

@@ -191,8 +191,8 @@ The dataset is an off-car deliverable. Going through `image_transport` and a
 rosbag would add a lossy re-encode, couple capture rate to topic rate, and
 require the class container to be up — all for no benefit. What the pipeline
 here *is* good for is being copied: the DepthAI configuration in
-`capture_cones.py` is the reference the deployed `cone_perception/yolo_node.py`
-should match, so the detector sees at inference the same colors it trained on.
+`capture_cones.py` is the reference the on-car detector in `detectors.py`
+matches, so the detector sees at inference the same colors it trained on.
 
 ### The camera-ownership problem
 
@@ -298,10 +298,9 @@ recording at all.
 
 Same reason as the camera tool, plus one more. A rosbag needs ROS to replay,
 and the point of these recordings is the pure-Python replay harness in `sim/` —
-Person B develops centerfinding on a laptop with no ROS installed. `ld06.py`
-decodes the wire format into a plain `Scan`, which is what
-`cone_perception/lidar_cluster.py` consumes; when the nav stack does want the
-lidar as a topic, that node is a thin `rclpy` wrapper, not a second decoder.
+centerfinding is developed on a laptop with no ROS installed. `ld06.py` decodes
+the wire format into a plain `Scan`, which is what
+`cone_perception/clustering.py` consumes.
 
 **Only one process may hold the serial port.** Do not run the container's lidar
 driver at the same time as this. Unlike the camera, though, the lidar does not

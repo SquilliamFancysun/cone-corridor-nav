@@ -36,15 +36,14 @@ import time
 
 # On the car everything sits in one directory: deploy.sh drops cone_perception/
 # and cone_nav/ beside this file, so the imports below just resolve. In a git
-# checkout they live under ros2/src/, and --detector replay is meant to be run
+# checkout they live under src/, and --detector replay is meant to be run
 # at a desk, so find them there too rather than making the tool car-only.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if not os.path.isdir(os.path.join(_HERE, "cone_perception")):
     _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
-    for _pkg in ("cone_perception", "cone_nav"):
-        _src = os.path.join(_REPO, "ros2", "src", _pkg)
-        if os.path.isdir(_src) and _src not in sys.path:
-            sys.path.insert(0, _src)
+    _src = os.path.join(_REPO, "src")
+    if os.path.isdir(_src) and _src not in sys.path:
+        sys.path.insert(0, _src)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
