@@ -20,24 +20,27 @@ analysis tooling and this sentence were produced in that collaboration.
 
 | | |
 |---|---|
-| Commits on the project branches | 113, over 12 days (2026-08-23 → 2026-09-03) |
-| Carrying a `Co-Authored-By: Claude` trailer | **109 (96.5%)** — including the first commit in the repository |
+| Commits on the project branches | 117, over 13 days (2026-08-23 → 2026-09-04) |
+| Carrying a `Co-Authored-By: Claude` trailer | **113 (96.6%)** — including the first commit in the repository |
 | The 4 that do not | one teammate's mp3 playback feature |
 | Python | 26,704 lines across 105 files |
 | Tests | 710 test functions across 42 files |
-| Documentation | 4,111 lines of markdown |
-| Net churn | +64,332 / −3,470 |
+| Documentation | 4,303 lines of markdown |
+| Cumulative churn, text files | +51,169 / −3,802 |
 | Commit-message prose | ~26,000 words — more than the entire docs tree |
 | Verification trail | 26 on-car trial logs, 14 deploy tags, 3 training runs with committed curves |
 
-Check the headline number yourself:
+Check the headline number yourself. Read the trailers rather than grepping the
+body -- some commit messages discuss the trailer and a plain grep double-counts
+them:
 
 ```bash
-git log --branches --format='%b' | grep -c 'Co-Authored-By: Claude'
+git log --format='%(trailers:key=Co-authored-by,valueonly)' | grep -c Claude
 ```
 
-The trailer is on the commits because they were written that way, not applied
-retroactively. `6a5bf15`, the scaffold that created the directory structure,
+Counts are as of this commit; the command is the authority as the history
+grows. The trailer is on the commits because they were written that way, not
+applied retroactively. `6a5bf15`, the scaffold that created the directory structure,
 carries it; so does `b9e424d`, the last measurement before submission.
 
 ## What the humans did
