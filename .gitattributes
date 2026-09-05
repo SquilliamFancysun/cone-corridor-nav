@@ -1,0 +1,22 @@
+# Shell scripts keep LF line endings in the working tree on every platform.
+#
+# Git for Windows sets core.autocrlf=true in its system config, so a checkout on
+# a Windows machine rewrites LF to CRLF on the way to disk. The committed blobs
+# stay clean either way -- this is a working-tree conversion, and it happens
+# again on every checkout, so fixing a file by hand does not hold.
+#
+# That is harmless for almost everything here. Python does not care (universal
+# newlines, and nothing is run via its shebang), route files are parsed with
+# splitlines() and strip(), and Markdown is Markdown.
+#
+# It is not harmless for a shell script, because deploy.sh rsyncs the working
+# tree to the car and rsync copies bytes. A CRLF script lands on Linux with a
+# shebang the kernel reads literally: it looks for an interpreter named `bash\r`
+# and reports `bad interpreter: /usr/bin/env bash^M`. car_health.sh is the one
+# that matters -- it is documented to run ON the car, and it is what you reach
+# for after the car drops off the network, which is the worst moment to find it
+# broken.
+#
+# Scoped to *.sh deliberately. A blanket `* text=auto` would renormalize the
+# whole repo; this changes no blob at all, since they are already LF.
+*.sh text eol=lf

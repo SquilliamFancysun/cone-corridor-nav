@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+.ruff_cache/
 
 # ROS2 build products (build inside the container, never commit)
 build/
@@ -19,8 +20,28 @@ log/
 model/dataset/images/*
 !model/dataset/images/.gitkeep
 
+# Roboflow exports: re-downloadable, and the images in them are the same
+# gigabytes we already keep out. roboflow_export.py syncs the labels, the
+# class list and manifest.json into model/dataset/labels/, which IS in git.
+model/dataset/export/
+
+# Ultralytics writes here if a run is launched without --project
+model/training/runs/
+
 # Commit stamp written by model/capture/deploy.sh at deploy time
 model/capture/VERSION
+
+# Driving audio: 7 MB of mp3 that changes on its own schedule, kept out of git
+# for the same reason weights are. It lives on the audio-v1 Release, deploy.sh
+# fetches it onto the car when the car is missing it, and the --delete rsync
+# excludes audio/ so a deploy never strips it back off.
+model/capture/audio/
+
+# Measured on the car by `lidar_view.py --calibrate` and only true of that car's
+# mount. deploy.sh never pushes it, so a copy in git would be a second set of
+# numbers that nothing reads. The human record is the flags line in
+# model/capture/README.md.
+model/capture/calibration.json
 
 # Recorded bags are large; keep CSV summaries in git instead
 *.db3

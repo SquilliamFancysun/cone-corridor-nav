@@ -1,0 +1,42 @@
+# Off-car Python dependencies: model/dataset and model/training.
+#
+# torch is deliberately NOT pinned in this file, because the right build is
+# platform-specific and getting it wrong fails silently. On Windows the wheel
+# PyPI serves for `torch` is CPU-only, so `pip install torch` next to a 3080 Ti
+# gives you a clean import, `torch.cuda.is_available() == False`, and a training
+# run that takes twenty times as long for no visible reason.
+#
+# Install torch first, for the machine you are on:
+#
+#   NVIDIA GPU      pip install -r requirements-cuda.txt
+#   Colab           already ships a CUDA torch; skip this step
+#   Apple silicon   pip install torch torchvision     (MPS: smoke tests only)
+#   CPU only        pip install torch torchvision
+#
+# then the rest:
+#
+#   pip install -r requirements.txt
+#
+# Versions are pinned because train_config.json stamps them into every run, and
+# a curve nobody can reproduce is not a deliverable. Bump them deliberately.
+#
+# NEEDS PYTHON 3.11 OR NEWER (numpy 2.3.5 is the floor; roboflow and pillow want
+# 3.10). On macOS `python3` is Apple's 3.9 even inside a conda (base) shell, and
+# a venv built on it fails in a way that names the wrong culprit: its pip is too
+# old to read the newer releases' metadata, so it reports
+#
+#   ERROR: Could not find a version that satisfies the requirement roboflow==1.4.1
+#          (from versions: ... 1.2.16)
+#
+# which reads as a bad pin rather than a stale interpreter. Check before you
+# install, and build the venv against a Python you named explicitly:
+#
+#   python3 -V                          # if this says 3.9, do not use it
+#   /path/to/python3.11+ -m venv .venv  # e.g. ~/miniforge3/bin/python3
+#   source .venv/bin/activate && python -V
+
+ultralytics==8.4.131
+roboflow==1.4.1
+numpy==2.3.5
+pillow==12.3.0
+PyYAML==6.0.3

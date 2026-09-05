@@ -1,0 +1,29 @@
+{
+  "_readme": [
+    "Which capture session goes to which split. This file is the split, not",
+    "Roboflow's random assignment: near-identical frames from one session land",
+    "on both sides of a random split, which inflates mAP and hides the",
+    "generalization failure the test set exists to catch.",
+    "",
+    "Hold back a whole lighting condition rather than skimming frames off each",
+    "one. Values: train | valid | test. null means undecided — the upload",
+    "script refuses to touch a session until someone has chosen.",
+    "",
+    "Keep this in sync with the session table in DATASET_CARD.md."
+  ],
+  "sessions": {
+    "20260827_1053_lot-sun-A": "train",
+    "20260827_1413_ebu2_test": "test",
+    "20260827_1429_ebu2_test_2": "valid",
+    "20260827_1503_eli1": "train",
+    "20260828_1313_eli2": null,
+    "20260828_1320_eli2": "train",
+    "20260828_1324_eli3": "train",
+    "20260828_1328_eli4": "train",
+    "20260828_1348_eli5": "train",
+    "20260828_1354_eli6": "train",
+    "20260829_1718_will1": "train",
+    "20260829_1724_will2": "test",
+    "20260829_1726_will3": "valid"
+  }
+}

@@ -213,9 +213,12 @@ def parse_args(argv=None):
                         help="lens position 0-255; default pins whatever autofocus "
                              "settled on, so it cannot hunt mid-session")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="joystick device node")
-    parser.add_argument("--record-button", type=int, default=0,
+    parser.add_argument("--record-button", type=int, default=2,
                         help="joystick button that toggles recording; find it with "
-                             "`python joystick.py --probe-buttons` (default: 0 = A)")
+                             "`python joystick.py --probe-buttons`. Default 2 = X, "
+                             "which DonkeyCar leaves unbound — A is its E-Stop and B "
+                             "its tub recorder, and every process on the pad sees "
+                             "the same press (default: 2)")
     parser.add_argument("--no-joystick", action="store_true",
                         help="record immediately without a gamepad; needs --duration")
     parser.add_argument("--duration", type=float, default=None,

@@ -6,10 +6,10 @@ worth a labeler's time, and print the numbers that DATASET_CARD.md asks for.
 Rejected frames are MOVED to <session>/_rejected/, never deleted — the contact
 sheet is there so you can check the script's judgement and put anything back.
 
-    uv run --with pillow --with numpy python prepare_dataset.py --pull robocar
-    uv run --with pillow --with numpy python prepare_dataset.py --dry-run
+    python prepare_dataset.py --pull robocar
+    python prepare_dataset.py --dry-run
 
-Requires: pillow, numpy.
+Requires the off-car venv: see ../requirements.txt.
 """
 
 import argparse
@@ -25,7 +25,7 @@ try:
 except ImportError:
     raise SystemExit(
         "error: needs pillow and numpy.\n"
-        "       uv run --with pillow --with numpy python prepare_dataset.py ..."
+        "       pip install -r ../requirements.txt"
     )
 
 DEFAULT_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")

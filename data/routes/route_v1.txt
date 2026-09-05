@@ -1,0 +1,14 @@
+# Route for track_v1 with junction v2 gates.
+#
+# One junction per line, in the order the car meets them. `left` or `right`,
+# nothing else. Blank lines and `#` comments are ignored; anything else is a
+# hard error naming the line number, because a typo here steers a car.
+#
+# Read by cone_nav/guidance/route_exec.py, passed to drive_junction.py as
+# --route. A route entry is consumed when topo_state confirms a gate was
+# passed -- there is no odometry, so nothing here is a distance or a time.
+#
+# See data/layouts/junction_v2.md for the gate geometry these turns refer to.
+
+left
+right
