@@ -44,6 +44,24 @@ RIGHT at the second, route fully consumed, then the trophy: run-in opened at
 0.99 m and the car **stopped 0.265 m away** with `stop_reason: goal reached`.
 Zero goal hops, zero blind ticks, duty held at 0.050.
 
+### Two junctions from a provided route — `junction-two.jsonl`
+
+<video src="https://github.com/user-attachments/assets/31430fbf-ba58-4b5e-878e-98231733a4e8" poster="docs/media/junction-two-poster.jpg" controls></video>
+
+344 ticks / 34.3 s. The route asked for two junctions, `left` then `right`, and
+the car took both: entered the manoeuvre twice, confirmed both passes, with 40
+ticks holding a whole red triple and the first gate picked up at 2.82 m.
+
+The same run from the car's side — cone labels, the lidar scan, and the
+extracted centreline in green, in Foxglove:
+
+<video src="https://github.com/user-attachments/assets/bc84a101-1069-4fd1-b3a1-fa228fb6d274" poster="docs/media/fusion-poster.jpg" controls></video>
+
+This is the fusion output the whole stack rests on: LD06 clusters carrying
+camera class labels, paired into corridor boundaries, with the centreline pure
+pursuit actually steers to. The two recordings were taken simultaneously, so
+the cones appearing in the 3D view are the ones in the footage above.
+
 ### A full autonomous exploring run — `explore-run-1854.jsonl`
 
 <video src="https://github.com/user-attachments/assets/367e3be7-fe15-49c6-ada4-b59914b98a03" poster="docs/media/explore-run-poster.jpg" controls></video>
@@ -51,8 +69,7 @@ Zero goal hops, zero blind ticks, duty held at 0.050.
 *The full 63-second run. The operator walks alongside holding the deadman —
 releasing it stops the car — and carries it back when it names a dead end,
 which is what stage 7b requires. If the player does not load, the same file is
-on the [`video-v1` Release](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/tag/video-v1),
-along with [footage of the two-junction provided route](https://github.com/user-attachments/assets/31430fbf-ba58-4b5e-878e-98231733a4e8).*
+on the [`video-v1` Release](https://github.com/SquilliamFancysun/cone-corridor-nav/releases/tag/video-v1).*
 
 868 ticks / 86.6 s, in failing evening light. The car chose RIGHT at the
 junction, drove into a dead end and **named it itself** at 30.3 s — *"corridor
@@ -268,8 +285,9 @@ usable forward arc of ~218° — measured, not assumed.
 - **Driving audio** (`model/capture/audio/`) — 7 MB of mp3 on the `audio-v1`
   Release; `deploy.sh` fetches it onto the car. The code that plays it IS in git.
 - **Rosbags** (`*.db3`, `*.mcap`) — trial logs and analysis outputs ARE in git.
-- **Demo video** — 720p H.264 on the `video-v1` Release. The still frames used
-  on this page ARE in git, at `docs/media/`.
+- **Demo video** — 720p H.264 on the `video-v1` Release, and uploaded as GitHub
+  attachments for the inline players above. The still frames used as poster
+  images ARE in git, at `docs/media/`.
 
 Tags worth knowing: `demo-v1` pins the code and weights of the goal run,
 `weights-v3` the deployed detector, and 14 `deploy/*` tags pin exactly what was
