@@ -1,8 +1,11 @@
 # Cone-Defined Corridor Navigation
 
+![The car on a cone-marked corridor, sensor stack visible, boundary cones receding ahead of it](docs/media/car.jpg)
+
 MAE 148 final project — a car that drives itself through a course marked out by
 traffic cones, where the cones are not obstacles to dodge but the thing that
-tells the car where the road is.
+tells the car where the road is. Everything in front of it in that photo is the
+road; the blue and yellow cones are its two edges.
 
 The car detects five cone classes with a YOLOv8n detector (**test mAP50-95
 0.715**), fuses those labels with LD06 lidar clusters into a labelled cone list,
