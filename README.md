@@ -4,148 +4,246 @@ MAE 148 final project — a car that drives itself through a course marked out b
 traffic cones, where the cones are not obstacles to dodge but the thing that
 tells the car where the road is.
 
-> **Scope, stated up front:** our baseline executes a route *provided* to the
-> vehicle ("left at the first junction, right at the second"); autonomous route
-> planning is a nice-to-have.
+The car detects five cone classes with a YOLOv8n detector (**test mAP50-95
+0.715**), fuses those labels with LD06 lidar clusters into a labelled cone list,
+pairs the cones into a corridor and extracts a centreline, follows it with pure
+pursuit, recognises a junction from a triple of red cones and turns where a
+route file — **or its own search** — tells it to, and stops in front of a
+magenta trophy.
+
+The original proposal scoped autonomous route planning as a nice-to-have and
+the provided route as the baseline. Both were built, and both were driven.
+
+---
+
+## What the car did, on the car
+
+Each claim below is a log in `data/trials/`, not a description. Read any of them
+with `python model/capture/junction_report.py <log>`.
+
+### A full provided route, ending at the goal — `goal-run-1551.jsonl`
+
+586 ticks / 58.5 s at 10 Hz. LEFT at the first junction (gate seen at 2.77 m),
+RIGHT at the second, route fully consumed, then the trophy: run-in opened at
+0.99 m and the car **stopped 0.265 m away** with `stop_reason: goal reached`.
+Zero goal hops, zero blind ticks, duty held at 0.050.
+
+### A full autonomous exploring run — `explore-run-1854.jsonl`
+
+868 ticks / 86.6 s, in failing evening light. The car chose RIGHT at the
+junction, drove into a dead end and **named it itself** at 30.3 s — *"corridor
+ends 0.85 m ahead (orange wall seen)"* — was carried back and re-armed, took the
+LEFT branch instead, and **stopped 0.215 m from the trophy**. It built a map of
+3 nodes / 2 edges / 1 dead end as it went and emitted the route it had worked
+out to `data/routes/optimal_explore_1854.txt`.
+
+That route file is the interesting artefact: the car drove two gates while
+exploring and the emitted route is one, because it removed the dead end. It is
+also one turn short of describing the whole course — the car physically passed a
+second junction that never armed a gate, so the route is correct for what was
+*mapped*, which is not the same as what was driven. The file says so in its own
+header.
+
+### The reverse drivetrain — `rev-8a.jsonl`, `rev-8b-run{1,2,3}-*.jsonl`
+
+`rev-8a` on a stand answered the only question that mattered: the VESC accepts a
+negative duty from this tool and the wheels turn backwards at 0.05. Three
+tape-measured floor runs (105 in / 118 in / 115 in) then settled the reverse
+speed at **0.423 m/s, sd 0.014** — measured tape-over-clock and so independent
+of the odometry, which under-reads the reverse by 12–28%.
+
+The first floor run also found a fault that had nothing to do with reverse: the
+car backed 120 in and arrived 40 in to the right, an arc of 5.08 m radius with
+the servo commanded to dead centre on all 291 ticks — a **3.72° mechanical bias
+at commanded centre**. The steering was adjusted by hand before the next run,
+and median per-tick lateral error fell from 0.0395 m to 0.0075 m.
+
+---
+
+## What does not work
+
+This section is part of the deliverable. The repo would read better without it
+and would be worth less.
+
+- **The autonomous back-out manoeuvre has never run on a car.** `backout.py` and
+  `reverse_ctrl.py` are written and pass in simulation, and `backout_state` is
+  empty on all 12,873 ticks of all 26 trial logs. Stages 8c–8f of
+  [`docs/junction-bringup.md`](docs/junction-bringup.md) were not run.
+- **The sim result is weaker than it looks.** The blocked-maze test reaches the
+  goal on both mirrors at `--lookahead 1.5`. At `--lookahead 0.8`, which
+  [`docs/hardware-baseline.md`](docs/hardware-baseline.md) mandates for this
+  car, the right-blocked mirror fails: *"backed out 5.29 m without seeing the
+  junction (bound 5.26 m)"*.
+- **The reverse is out of envelope.** 0.423 m/s is 1.41× `reverse_ctrl.MAX_REVERSE_MPS`,
+  above the speed `K_HEADING`/`K_CROSS` were swept at — and no duty can bring it
+  down, because 0.05 is already the motor's cogging floor.
+- **The distance bound is longer than the code believes.** `BackoutManoeuvre`
+  bounds on travelled distance, and the odometry under-reads by 12–28% (mean 21,
+  sd 10 points — not a scale factor), so the car would run 14–39% past its own
+  bound in the one direction it cannot see.
+- **No OAK-D `.blob`.** `model/export/` is empty; the detector runs in PyTorch
+  on the Pi rather than on the camera's VPU.
+- **D5 is unfilled.** `data/layouts/track_v1.csv` has a header and no measured
+  rows, so `analysis/map_from_log.py --layout` has never scored the built map
+  against surveyed ground truth. The map residual is known only in simulation.
+- **The junction was never laid to spec.** `data/layouts/junction_v2.md` calls
+  for 1.35 m gate gaps; the driven runs measured 0.71–0.92 m. The car detected
+  the gates anyway, and `junction_report.py` prints the discrepancy on every run.
+- **Three known sim test failures** (`pytest sim`), all in `test_drive_sim.py`.
+
+---
+
+## Generative AI use
+
+**This repository was written with Claude Code.** That was a deliberate
+methodology choice made at the start of the project, not incidental assistance
+at the end of it.
+
+**109 of the 113 commits (96.5%) carry a `Co-Authored-By: Claude` trailer**,
+including the very first commit in the repository. Reproduce that count with:
+
+```bash
+git log --branches --format='%b' | grep -c 'Co-Authored-By: Claude'
+```
+
+The four that do not are one teammate's mp3 playback feature. Every other line
+of the 26,704 lines of Python and 710 tests here was written in collaboration
+with an AI coding agent.
+
+What the humans did is not code: 43 cones laid to a surveyed layout, a tape
+measure, a servo adjusted by hand, ~150 hand-drawn bounding boxes and the
+corrections over four model-prelabeled sessions — and roughly a dozen recorded
+instances of overruling the model on evidence it could not see.
+
+[**`docs/ai-usage.md`**](docs/ai-usage.md) is the full log (deliverable D11):
+the per-phase table, the human corrections, and three worked examples with the
+prompt, what came back, and what changed.
+
+---
 
 ## Repository layout
 
 ```
-model/       CV model development (off-car): dataset, training, OAK-D blob export
-ros2/src/    Everything that runs on the car — a ROS2 workspace source tree
-  cone_msgs/         Custom message definitions (the interfaces between layers)
-  cone_perception/   yolo_node, lidar_cluster, associate  → labeled cone list
-  cone_nav/          corridor / topology / guidance / control layers
-sim/         Synthetic cone-field generator + replay harness (no hardware needed)
-analysis/    Perception characterization, trial analysis, plotting scripts
-data/        Surveyed layouts (ground truth) and trial logs
-docs/        Report, slides, AI usage log, verified hardware baseline
+model/capture/   THE ON-CAR RUNTIME. drive_junction.py is the program that
+                 drives the car; drive_corridor.py is the corridor-only
+                 subset it extends. Also the dataset recorder, the live
+                 views, the lidar driver, and junction_report.py.
+src/             Pure algorithm packages — no ROS, no hardware, no I/O.
+  cone_perception/   clustering, fusion, label memory, odometry, ego-motion
+  cone_nav/          corridor/ topology/ guidance/ control/
+  cone_msgs/msg/     the labelled-cone schema; LabeledCone.msg is the
+                     source of truth for class order
+model/           CV model development (off-car): dataset, labelling,
+                 training runs and curves
+sim/             Synthetic cone-field generator + replay harness
+analysis/        map_from_log.py — rebuild the map from a trial log and
+                 score it against a surveyed layout
+data/            layouts (ground truth), routes, and 26 on-car trial logs
+docs/            bring-up manual, hardware baseline, data collection, D11
 ```
 
-**Collecting data?** [`docs/data-collection.md`](docs/data-collection.md) is the
-step-by-step runbook: build the track, preflight the hardware, run the three
-panes, pull the sessions off the car.
+Deliverables: `model/` → D1–D2, `analysis/` → D3 + D6, `model/capture/` +
+`src/` → D4, `data/layouts/` → D5, `docs/` → D7 + D11.
 
-Mapping to the proposal's deliverables: `model/` → D1–D2, `analysis/` → D3 + D6,
-`ros2/src/` → D4, `data/layouts/` → D5, `docs/` → D7 + D11.
+**Start here:** [`docs/junction-bringup.md`](docs/junction-bringup.md) is the
+operating manual — the staged bring-up from a desk test to a driven run, with
+what each stage did and the numbers it produced.
 
 ## Design rule that everything depends on
 
 **Algorithm code never imports `rclpy`.** Corridor extraction, cone pairing, the
 gate state machine, graph code, planners, and pure pursuit are plain Python
-modules inside `cone_nav/`. ROS nodes are thin wrappers that subscribe, call the
-pure function, and publish. This is what lets:
+modules under `src/`. This is what lets:
 
-- Person B develop and unit-test everything against `sim/` on a laptop with no
-  ROS installed
-- pytest run on any machine: `pip install -e ros2/src/cone_nav && pytest`
-- the replay harness feed recorded logs through the exact code that runs on-car
+- everything be developed and unit-tested on a laptop with no ROS installed
+- `pytest` run on any machine with no install step at all — `conftest.py` puts
+  the packages on the path
+- the replay harness feed recorded logs through the exact code that ran on-car
 
-## Working on it
+The rule held. No file in this repository imports `rclpy`.
 
-### Which branch is live
+The packages were originally shaped as ROS 2 ament packages against a
+container-based deployment. That was abandoned: the car runs the tool as a host
+process, `deploy.sh` rsyncs the pure packages next to it, and the ROS node
+wrappers were never built. The packaging was removed rather than left as a
+costume — see [`docs/ai-usage.md`](docs/ai-usage.md) for why the pure/wrapper
+split survived the change anyway.
 
-`hardware-baseline` is the branch the car runs. Everything on-car — the capture
-tool, perception, nav, the trial logs — lands there. `main` is the earlier
-milestone and is a week or more behind it at any given time; branch new work off
-`hardware-baseline`, not off `main`.
+## Running it
 
-Do not confuse the branch with [`docs/hardware-baseline.md`](docs/hardware-baseline.md),
-which is the *hardware* record — port map, cabling, device checks. The names
-collide, and grepping the repo for "hardware-baseline" finds the document, never
-the branch. That is a large part of how a collaborator once concluded the
-branch did not exist.
-
-### First time on this repo
-
-The repo is private, so a fresh clone needs credentials before anything else:
+### At a desk, no hardware
 
 ```bash
-gh auth login            # then: git clone / git fetch work normally
-git fetch origin
-git switch hardware-baseline
+python -m pytest                # 741 passed, 2 skipped
+python -m pytest sim            # 76 passed, 3 known failures
+
+# replay a track through the real navigation code
+PYTHONPATH=src:model/capture:. \
+  python -m sim.drive_sim --track junction-left --route data/routes/junction_left.txt
+
+# rebuild the map the car built, from its log
+python analysis/map_from_log.py data/trials/explore-run-1854.jsonl
+
+# read any run the way we read them during bring-up
+python model/capture/junction_report.py data/trials/goal-run-1551.jsonl
 ```
 
-If `git fetch` prompts for a password or returns 403, stop and fix auth. Do not
-work around it by copying files off the car — the car is a deploy target, not a
-source of truth, and it has no git clone at all (see
-[`model/capture/deploy.sh`](model/capture/deploy.sh)).
+### On the car
 
-### Recovering the revision a car is running
-
-`deploy.sh` stamps `model/capture/VERSION` on the car with three fields:
+Three flags were not optional on this vehicle, and each cost a track session to
+learn:
 
 ```
-<full sha> <branch> <deploy tag>
+--invert-steering    the servo is mirrored; without it the car turns the wrong
+                     way and accumulates -167 deg over a run
+--max-range 3.5      the flattened camera pitch admits world clutter past 2.5 m
+--lookahead 0.8      at the shipped 1.0 the car clipped the centre red cone
 ```
-
-Fetch it **by branch or by tag, never by the sha**:
 
 ```bash
-git fetch origin hardware-baseline          # the branch it was deployed from
-git fetch origin tag deploy/20260901-155652 # or the exact deploy
+./model/capture/deploy.sh                     # commit, push, THEN deploy
+
+# drive a provided route
+python drive_junction.py --weights ~/models/best.pt --route routes/route_v1.txt \
+    --invert-steering --max-range 3.5 --lookahead 0.8 --max-duty 0.05 --log run.jsonl
+
+# explore, and write out the route it discovers
+python drive_junction.py --weights ~/models/best.pt --explore \
+    --invert-steering --max-range 3.5 --lookahead 0.8 \
+    --max-duty 0.05 --emit-route routes/optimal.txt --log explore.jsonl
 ```
 
-`git fetch origin <sha>` does not work against GitHub. It refuses to serve a
-commit it has not advertised, and the error reads as though the commit does not
-exist. It is fetchable — you just have to ask for it by a name.
+Hold X on the F710 to arm; releasing it stops the car. `--dry-run` runs the full
+perception and decision stack with the VESC never opened.
 
-**On the Mac (or any laptop, no ROS required):**
+## Hardware
 
-```bash
-pip install -e ros2/src/cone_nav
-pytest ros2/src/cone_nav
-python -m sim.generate --help    # synthetic cone fields
-```
+Car `ucsdrobocar-148-02`. Verified baseline, port map, cabling traps and the
+device checks are in [`docs/hardware-baseline.md`](docs/hardware-baseline.md).
 
-**On the Pi (inside the class ROS2 container):** clone the repo, mount `ros2/src`
-into the container's workspace `src/`, then:
+| | | |
+|---|---|---|
+| Compute | Raspberry Pi 5 Model B | aarch64, kernel 6.12.96 |
+| Camera | OAK-D Lite | IMX214 RGB, USB3 direct to the Pi |
+| Lidar | LD06 | `/dev/ttyUSB0`, 9.97 Hz, via powered hub |
+| Drive | VESC | `/dev/ttyACM0` |
+| Input | Logitech F710 | `/dev/input/js0`, XInput mode |
+| Power | CKCS CK2416 DC-DC | 5 V rail to the hub, measured 5.04 V |
 
-```bash
-colcon build --packages-select cone_msgs cone_perception cone_nav
-source install/setup.bash
-```
-
-`build/`, `install/`, and `log/` are gitignored — build products stay in the
-container, never in the repo.
-
-**Before a data run:** [`docs/data-collection.md`](docs/data-collection.md) walks
-the whole procedure end to end. It leans on
-[`docs/hardware-baseline.md`](docs/hardware-baseline.md), which records the
-verified USB port map, the cables each link actually requires, and a four-step
-check that every device is not just enumerated but working — re-run that after
-any change to cabling, ports, or power.
+Geometry: wheelbase 0.3302 m, lidar scan plane at 0.127 m mounted at the front
+edge of the chassis. The chassis occludes the rear 142° of the lidar, leaving a
+usable forward arc of ~218° — measured, not assumed.
 
 ## What is deliberately NOT in git
 
-- **Dataset images** (`model/dataset/images/`) — large binaries; the labels,
-  splits, and dataset card ARE in git. See `model/README.md` for where images live.
-- **Model weights** (`*.pt`, `*.onnx`, `*.blob`) — attach the trained model to a
-  GitHub Release instead; training configs and curves ARE in git.
+- **Dataset images** (`model/dataset/images/`) — large binaries. The labels,
+  splits and dataset card ARE in git; see `model/README.md`.
+- **Model weights** (`*.pt`, `*.onnx`, `*.blob`) — on GitHub Releases
+  (`weights-v3`). Training configs and curves ARE in git.
 - **Driving audio** (`model/capture/audio/`) — 7 MB of mp3 on the `audio-v1`
-  Release. `deploy.sh` fetches it onto the car when the car does not have it;
-  the code that plays it IS in git.
-- **Rosbags** (`*.db3`, `*.mcap`) — trial CSV summaries and analysis outputs ARE
-  in git.
+  Release; `deploy.sh` fetches it onto the car. The code that plays it IS in git.
+- **Rosbags** (`*.db3`, `*.mcap`) — trial logs and analysis outputs ARE in git.
 
-The audio arrived on a feature branch as two committed mp3s. A file deleted in a
-later commit still ships with every default `git clone` — measured at 7017 KB
-against 78 KB for the same tree without it — so the commit that added them was
-dropped before this branch was first pushed, rather than removed in a follow-up
-commit that would have kept the blobs reachable forever. Nothing in
-`hardware-baseline` history has ever contained them.
-
-**Outstanding local cleanup.** The rebase that did this left a backup branch,
-`pre-mp3-strip-backup`, on the machine it was run from (Windows, September 2026).
-It was never pushed, so it costs nobody else anything, but it is the last thing
-holding the 6.8 MB of dropped mp3 blobs in that clone. Once the pushed branch
-has been checked over:
-
-```bash
-git branch -D pre-mp3-strip-backup
-git gc --prune=now                  # reclaims the blobs
-```
-
-Not urgent, and safe to leave: it is 6.8 MB of local disk and nothing more.
-Deleting it is not reversible, though — after `gc` the pre-rebase chain survives
-only in the reflog, for 90 days.
+Tags worth knowing: `demo-v1` pins the code and weights of the goal run,
+`weights-v3` the deployed detector, and 14 `deploy/*` tags pin exactly what was
+on the car for each session.
