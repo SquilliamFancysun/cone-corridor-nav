@@ -10,10 +10,9 @@ Then connect Foxglove Studio on the laptop to ws://<car-ip>:8765 — the car's I
 or its .local name, never the ssh alias, which only ssh can resolve.
 
 Not a ROS node, for the same reason capture_cones.py is not one: a recording
-that needs the class container up to replay is a recording Person B cannot use
-on a laptop. ld06.py decodes the wire format into a plain Scan, which is what
-cone_perception/lidar_cluster.py will consume — so when the nav stack does want
-a ROS topic, that node is a thin rclpy wrapper, not a second decoder.
+that needs the class container up to replay is a recording a teammate cannot
+use on a laptop. ld06.py decodes the wire format into a plain Scan, which is
+what cone_perception/clustering.py consumes.
 
 Only one process may hold the serial port. Do not run the container's lidar
 driver at the same time as this.

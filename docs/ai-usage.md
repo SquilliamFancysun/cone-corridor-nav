@@ -22,7 +22,7 @@ analysis tooling and this sentence were produced in that collaboration.
 |---|---|
 | Commits on the project branches | 117, over 13 days (2026-08-23 → 2026-09-04) |
 | Carrying a `Co-Authored-By: Claude` trailer | **113 (96.6%)** — including the first commit in the repository |
-| The 4 that do not | one teammate's mp3 playback feature |
+| The 4 that do not | Eli Carsenti's mp3 playback feature |
 | Python | 26,704 lines across 105 files |
 | Tests | 710 test functions across 42 files |
 | Documentation | 4,303 lines of markdown |
@@ -43,7 +43,7 @@ grows. The trailer is on the commits because they were written that way, not
 applied retroactively. `6a5bf15`, the scaffold that created the directory structure,
 carries it; so does `b9e424d`, the last measurement before submission.
 
-## What the humans did
+## What the team did
 
 The honest counterpart, and the reason the above is a methodology rather than a
 boast. None of this is code, and none of it could have been generated:
@@ -170,7 +170,7 @@ at 7 cm alongside a real cone at 1.5 m and asserts only the cone survives.
 
 ## A note on what this does not claim
 
-The model did not build the car, drive it, or measure it, and on the evidence
+The model did not build the car, drive it, or measure it — the team did, and on the evidence
 above it was wrong in ways that mattered roughly a dozen times — each time
 about something that could only be learned by putting a tape or a wheel on the
 ground. What it did was write essentially all of the code, and write it fast

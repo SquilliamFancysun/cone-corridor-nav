@@ -106,7 +106,7 @@ including the very first commit in the repository. Reproduce that count with:
 git log --format='%(trailers:key=Co-authored-by,valueonly)' | grep -c Claude
 ```
 
-The four that do not are one teammate's mp3 playback feature. (Counts are as
+The four that do not are Eli Carsenti's mp3 playback feature. (Counts are as
 of this commit; the command above is the authority as the history grows.) Every other line
 of the 26,704 lines of Python and 710 tests here was written in collaboration
 with an AI coding agent.

@@ -5,8 +5,8 @@ myconfig_capture.py) so it drives the VESC without claiming the OAK-D. Only one
 process can hold the device.
 
 The DepthAI pipeline here is the reference camera configuration: whatever
-cone_perception/yolo_node.py does at inference time should match it, or the
-detector sees different colors than it trained on.
+detectors.py does at inference time should match it, or the detector sees
+different colors than it trained on.
 
     python capture_cones.py --session-label lot-sun-A
 """

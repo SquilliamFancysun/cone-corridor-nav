@@ -5,9 +5,9 @@ which means the parts that can be wrong quietly (CRC, angle interpolation, the
 revolution boundary) are exercisable by pytest on a laptop with no car attached.
 lidar_view.py owns the serial port and hands the bytes here.
 
-The Scan produced here is meant to be the representation cone_perception's
-lidar_cluster.py consumes, so that when the nav stack needs the lidar as a ROS
-topic the node is a thin rclpy wrapper rather than a second decoder.
+The Scan produced here is the representation cone_perception's clustering.py
+consumes, so the decode happens once and the nav stack reads the same Scan the
+tests do.
 
 Frame format (47 bytes, fixed):
 
