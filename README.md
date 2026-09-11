@@ -17,6 +17,11 @@ magenta trophy.
 The original proposal scoped autonomous route planning as a nice-to-have and
 the provided route as the baseline. Both were built, and both were driven.
 
+**The submitted MAE 148 deliverable is tagged [`demo-v1`](../../tree/demo-v1).**
+`main` continues past it into a v2 build — a new carrier board, a 4S Li-ion
+pack and a 360 camera, under the same perception and navigation stack.
+Everything below describes the car as submitted.
+
 ## The team
 
 | | |
