@@ -49,3 +49,26 @@ model/capture/calibration.json
 
 # macOS
 .DS_Store
+
+# KiCad working files. The schematic and layout ARE in git -- they are
+# S-expression text and they diff properly, so there is no reason to treat a
+# board like a binary. What is excluded here is everything KiCad regenerates or
+# keeps per-machine:
+#
+#   *-backups/    KiCad's own rolling autosave, one zip per save
+#   *.kicad_prl   local project preferences (open tabs, zoom, active layer)
+#   *.lck / ~*.*  lock and temp files from an open editor session
+#   *.step/*.wrl  3D models downloaded per-machine by the library manager
+#
+# Released gerbers are the deliberate exception and DO get committed -- see
+# hardware/carrier-board/fab/README.md for why.
+hardware/**/*-backups/
+hardware/**/*.kicad_prl
+hardware/**/*.lck
+hardware/**/~*.*
+hardware/**/*.step
+hardware/**/*.wrl
+
+# Gerbers exported for a look, outside a tagged fab release. The released ones
+# live in fab/rev-*/ and are committed on purpose.
+hardware/**/gerbers-scratch/

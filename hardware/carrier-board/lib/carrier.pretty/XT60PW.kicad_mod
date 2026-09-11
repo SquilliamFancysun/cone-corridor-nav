@@ -1,0 +1,40 @@
+(footprint "XT60PW"
+  (version 20240108)
+  (generator "manual")
+  (layer "F.Cu")
+  (descr "XT60PW right-angle PCB-mount power connector. TEMPLATE - NOT VERIFIED.
+          Print at 100% and lay a real connector on the paper before routing.
+          Correct the two marked values against the datasheet.")
+  (tags "XT60 connector power RC")
+  (attr through_hole)
+
+  (fp_text reference "J**" (at 0 -6) (layer "F.SilkS")
+    (effects (font (size 1 1) (thickness 0.15))))
+  (fp_text value "XT60PW" (at 0 10) (layer "F.Fab")
+    (effects (font (size 1 1) (thickness 0.15))))
+
+  ;; ---- VERIFY THESE TWO VALUES ----
+  ;; pad pitch  = 7.00 mm  (pads at x = -3.5 and +3.5)
+  ;; pad size   = 4.0 x 5.0 mm
+  ;; ---------------------------------
+
+  (pad "1" thru_hole rect (at -3.5 0) (size 4 5) (drill oval 1.8 3.2)
+    (layers "*.Cu" "*.Mask" "*.Paste"))
+  (pad "2" thru_hole circle (at 3.5 0) (size 4 5) (drill oval 1.8 3.2)
+    (layers "*.Cu" "*.Mask" "*.Paste"))
+
+  ;; body outline, 15.8 x 8.1 mm nominal
+  (fp_line (start -7.9 -4.05) (end 7.9 -4.05)
+    (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start 7.9 -4.05) (end 7.9 4.05)
+    (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start 7.9 4.05) (end -7.9 4.05)
+    (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -7.9 4.05) (end -7.9 -4.05)
+    (stroke (width 0.12) (type solid)) (layer "F.SilkS"))
+
+  ;; polarity mark - pad 1 is the NEGATIVE terminal by convention here;
+  ;; confirm against your own cable before you trust it
+  (fp_line (start -9.2 -4.05) (end -9.2 4.05)
+    (stroke (width 0.4) (type solid)) (layer "F.SilkS"))
+)
