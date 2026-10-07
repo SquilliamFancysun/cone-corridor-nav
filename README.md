@@ -17,6 +17,24 @@ magenta trophy.
 The original proposal scoped autonomous route planning as a nice-to-have and
 the provided route as the baseline. Both were built, and both were driven.
 
+## Step through a real run
+
+<a href="https://squilliamfancysun.github.io/cone-corridor-nav/explorer/"><img src="docs/media/explorer.png" width="520" alt="The car approaching the junction in explore-run-1854: the cones it saw that cycle, the cross-corridor edges kept from the Delaunay triangulation, the red gate mouth, and the green centreline"></a>
+
+**[Open the interactive explorer](https://squilliamfancysun.github.io/cone-corridor-nav/explorer/)**
+(or open [`docs/explorer/index.html`](docs/explorer/index.html) locally). It
+replays `explore-run-1854` one control cycle at a time: the cones the car saw,
+the Delaunay triangulation, the edges that survive the colour and length rules,
+the centreline, and the pure pursuit arc, with the car's own logged lookahead
+target drawn beside the recomputed one.
+
+The cones are the ones the car logged (`cones_xy`, pre-fill). Everything drawn
+from them is recomputed by the code in `src/`, through
+[`analysis/build_explorer.py`](analysis/build_explorer.py). Three junction-only
+steps are not replayed (the gate-line mask, `keep_branch` and the anchors), so
+through a junction the drawn line can differ from the one the car drove. The
+script's docstring says exactly what is and is not replayed.
+
 ## The team
 
 | | |
@@ -179,7 +197,8 @@ model/           CV model development (off-car): dataset, labelling,
                  training runs and curves
 sim/             Synthetic cone-field generator + replay harness
 analysis/        map_from_log.py — rebuild the map from a trial log and
-                 score it against a surveyed layout
+                 score it against a surveyed layout; build_explorer.py — replay
+                 a trial log into the step-through page in docs/explorer/
 data/            layouts (ground truth), routes, and 26 on-car trial logs
 docs/            bring-up manual, hardware baseline, data collection, D11
 ```
@@ -225,6 +244,9 @@ PYTHONPATH=src:model/capture:. \
 
 # rebuild the map the car built, from its log
 python analysis/map_from_log.py data/trials/explore-run-1854.jsonl
+
+# rebuild the step-through explorer page from a run's log
+python analysis/build_explorer.py data/trials/explore-run-1854.jsonl
 
 # read any run the way we read them during bring-up
 python model/capture/junction_report.py data/trials/goal-run-1551.jsonl
