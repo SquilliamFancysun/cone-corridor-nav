@@ -1,0 +1,389 @@
+<title>Delaunay Centerline Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a track-survey instrument. Big plan view of the course on the left, the method as a numbered sequence on the right, playback under the plan. */
+:root {
+  --bg: #eef2f0;
+  --panel: #ffffff;
+  --ink: #16201b;
+  --muted: #5b6a63;
+  --line: #d3dcd7;
+  --grid: #dfe6e2;
+  --edge: #2f3c36;
+  --centerline: #17874a;
+  --pursuit: #0d6a82;
+  --c-blue: #2160c4;
+  --c-yellow: #c99a00;
+  --c-red: #d13626;
+  --c-orange: #e06d07;
+  --c-magenta: #b8239c;
+  --cone-stroke: #ffffff;
+  --f-display: "Barlow Semi Condensed", "Arial Narrow", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", Helvetica, Arial, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1412; --panel: #161d1a; --ink: #e2eae6; --muted: #92a199; --line: #28332e; --grid: #1d2622;
+    --edge: #c3d0c9; --centerline: #4cd48a; --pursuit: #4cc2db;
+    --c-blue: #5c95f2; --c-yellow: #f0c63f; --c-red: #ff6a58; --c-orange: #ff9a3c; --c-magenta: #ea5bcf;
+    --cone-stroke: #0f1412; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1412; --panel: #161d1a; --ink: #e2eae6; --muted: #92a199; --line: #28332e; --grid: #1d2622;
+  --edge: #c3d0c9; --centerline: #4cd48a; --pursuit: #4cc2db;
+  --c-blue: #5c95f2; --c-yellow: #f0c63f; --c-red: #ff6a58; --c-orange: #ff9a3c; --c-magenta: #ea5bcf;
+  --cone-stroke: #0f1412; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 24px 40px; display: grid; gap: 18px; }
+header { display: grid; gap: 4px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(1.7rem, 3.4vw, 2.4rem); line-height: 1.05; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 70ch; margin: 0; }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.plan { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; min-width: 0; }
+.plan svg { display: block; width: 100%; height: auto; touch-action: manipulation; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.controls input[type=range] { flex: 1 1 200px; min-width: 0; accent-color: var(--centerline); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { font-family: var(--f-mono); font-size: 0.8rem; border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 6px 10px; }
+.btn:hover { border-color: var(--muted); }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.mono { font-family: var(--f-mono); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.chip { font-family: var(--f-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+:focus-visible { outline: 2px solid var(--pursuit); outline-offset: 2px; }
+
+aside { display: grid; gap: 14px; min-width: 0; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.step { width: 100%; text-align: left; display: grid; grid-template-columns: 30px 1fr; align-items: center; gap: 10px; padding: 9px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.step .n { font-family: var(--f-display); font-weight: 700; font-size: 1.15rem; color: var(--muted); }
+.step .t { font-family: var(--f-display); font-weight: 600; font-size: 1.08rem; letter-spacing: 0.01em; }
+.step[aria-current="step"] { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--centerline); }
+.step[aria-current="step"] .n { color: var(--centerline); }
+.explain { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px; }
+.explain h2 { font-family: var(--f-display); font-weight: 700; font-size: 1.25rem; margin: 0; }
+.explain p { margin: 0; }
+.explain .eq { font-family: var(--f-mono); font-size: 0.85rem; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+.readout { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.readout dt { color: var(--muted); font-size: 0.9rem; }
+.readout dd { margin: 0; text-align: right; font-family: var(--f-mono); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.ln { width: 18px; height: 0; border-top: 2px solid; display: inline-block; }
+.legs { display: inline-flex; gap: 6px; }
+.ring { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 3px solid var(--c-blue); background: var(--panel); }
+footer { color: var(--muted); font-size: 0.85rem; max-width: 90ch; }
+footer code { font-family: var(--f-mono); font-size: 0.78rem; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Cone-defined corridor navigation &middot; explore-run-1854</span>
+    <h1>One real run, one control cycle at a time</h1>
+    <p class="lede">Every cone on this page is one the car saw on the track during its autonomous exploring run. Step through what it computed from them each cycle: the Delaunay triangulation, the edges that survive the color and length rules, the centerline, and the pure pursuit arc it steered along.</p>
+  </header>
+
+  <div class="main">
+    <section class="plan" aria-label="Plan view of the run">
+      <svg id="svg" role="img" aria-label="Plan view of the course with the selected step drawn over the cones the car saw"></svg>
+      <div class="controls">
+        <span class="legs" id="legs" role="group" aria-label="Leg of the run"></span>
+        <button class="btn" id="play" type="button" aria-pressed="false">Play</button>
+        <input id="frame" type="range" min="0" max="0" value="0" aria-label="Control cycle">
+        <span class="mono" id="tlabel">t = 0.0 s</span>
+        <span class="chip" id="topo">follow</span>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span><i class="sw" style="background:var(--c-blue)"></i>left wall</span>
+        <span><i class="sw" style="background:var(--c-yellow)"></i>right wall</span>
+        <span><i class="sw" style="background:var(--c-red)"></i>junction gate</span>
+        <span><i class="sw" style="background:var(--c-orange)"></i>dead end</span>
+        <span><i class="sw" style="background:var(--c-magenta)"></i>goal</span>
+        <span><i class="sw" style="background:var(--muted)"></i>unlabeled</span>
+        <span><i class="ring"></i>labeled by geometry</span>
+        <span><i class="ln" style="border-color:var(--centerline)"></i>centerline</span>
+        <span><i class="ln" style="border-color:var(--pursuit)"></i>pursuit arc</span>
+      </div>
+    </section>
+
+    <aside>
+      <ol class="steps" id="steps"></ol>
+      <div class="toggles">
+        <button class="btn" id="fox" type="button" aria-pressed="false">Centerline only, like Foxglove</button>
+        <button class="btn" id="circ" type="button" aria-pressed="false">Show circumcircles</button>
+      </div>
+      <div class="explain" id="explain" aria-live="polite"></div>
+      <dl class="readout" id="readout"></dl>
+    </aside>
+  </div>
+
+  <footer>
+    Replayed from <code id="logname">explore-run-1854.jsonl</code>. Each cycle the car logged the cones fusion produced (before the side-assignment fill) and its scan-matched pose. This page feeds those cones through the repo's own <code>side_assign.fill_unlabeled</code>, <code>centerline.py</code> and <code>pure_pursuit.py</code>, every other cycle. Three junction-only steps are not replayed (the gate-line mask, the branch filter and the gate/goal anchors), so through a junction the line drawn here can differ from the one the car drove. The car's own logged lookahead target is the hollow ring. Faded cones are the map built from the whole leg by <code>analysis/map_from_log.py</code>. The run splits into two legs where the car was carried back from the dead end. Arrow keys step the timeline; keys 1 to 5 pick a step. Rebuild with <code>python analysis/build_explorer.py</code>.
+  </footer>
+</div>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("svg");
+  const COLOR = { blue: "var(--c-blue)", yellow: "var(--c-yellow)", red: "var(--c-red)", orange: "var(--c-orange)", magenta: "var(--c-magenta)", unlabeled: "var(--muted)" };
+  const STEPS = [
+    { t: "Cones in view",
+      h: "1 · Cones in view",
+      p: ["These are the LiDAR clusters the car found this cycle, within 3.5 m and inside the 218&deg; arc its chassis doesn't block.",
+          "Solid cones got their color from the camera. Rings were labeled by geometry: a cluster outside the camera's view assigned to the left or right wall by which side of the corridor it sits on. Gray ones stayed unlabeled and are ignored from here on."] },
+    { t: "Triangulate",
+      h: "2 · Delaunay triangulation",
+      p: ["Every blue, yellow and red cone is connected into triangles so that no cone lies inside any triangle's circumcircle. Turn on circumcircles to check it.",
+          "That rule favors short edges between near neighbors, so many edges run straight across the corridor. The triangulation itself ignores color."] },
+    { t: "Filter edges",
+      h: "3 · Keep the edges that cross",
+      p: ["Color and length rules come after the geometry. Keep blue&ndash;yellow edges between 0.6 and 2.5 m long (the corridor is 1.5 m wide), and red&ndash;red edges, which span a junction mouth.",
+          "Faded dashes were rejected: same-side edges, island-tip pairs, and edges reaching across into the other branch."] },
+    { t: "Centerline",
+      h: "4 · Midpoints become the path",
+      p: ["Each kept edge contributes its midpoint. Midpoints link when their edges share a cone, and the longest chain that starts within 3 m of the car, ordered near to far, is the line to drive.",
+          "Hollow points were found but aren't on the chosen chain."] },
+    { t: "Pure pursuit",
+      h: "5 · Steer onto the line",
+      p: ["From the rear axle, find where a circle of radius L = 0.8 m crosses the centerline, and steer along the arc through that point. The hollow ring is the target the car itself logged on this cycle."],
+      eq: "κ = 2y / L²   δ = atan(κ · W),  W = 0.33 m" }
+  ];
+  const FOX = { h: "What Foxglove showed",
+    p: ["Roughly your live view on the car: the labeled cones and the green centerline. Turn this off to see the steps that produced that line."] };
+
+  const st = { leg: 0, frame: 0, step: 2, fox: false, circ: false, playing: false, timer: null };
+  st.frame = D.legs[0].default || 0;
+  const layer = document.createElementNS(NS, "g");
+  const bg = document.createElementNS(NS, "g");
+  svg.appendChild(bg); svg.appendChild(layer);
+
+  const el = (name, attrs, parent) => {
+    const e = document.createElementNS(NS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(e);
+    return e;
+  };
+  const P = p => [p[0], -p[1]];
+  const key = p => p[0].toFixed(3) + "," + p[1].toFixed(3);
+  const ekey = (a, b) => { const ka = key(a), kb = key(b); return ka < kb ? ka + "|" + kb : kb + "|" + ka; };
+  const toWorld = (o, h, px, py) => [o[0] + px * Math.cos(h) - py * Math.sin(h), o[1] + px * Math.sin(h) + py * Math.cos(h)];
+
+  function circumcircle(t) {
+    const [a, b, c] = t;
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if (Math.abs(d) < 1e-9) return null;
+    const a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+    const ux = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+    const uy = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+    return { x: ux, y: uy, r: Math.hypot(a[0] - ux, a[1] - uy) };
+  }
+
+  let bounds = null;
+  function setupLeg() {
+    const leg = D.legs[st.leg];
+    const xs = leg.map.map(c => c.x), ys = leg.map.map(c => c.y);
+    leg.frames.forEach(f => {
+      xs.push(f.pose[0]); ys.push(f.pose[1]);
+      f.cones.forEach(c => { if (c[2] !== "unlabeled") { xs.push(c[0]); ys.push(c[1]); } });
+    });
+    const pad = 0.5;
+    bounds = { minX: Math.min(...xs) - pad, maxX: Math.max(...xs) + pad, minY: Math.min(...ys) - pad, maxY: Math.max(...ys) + pad };
+    const b = bounds;
+    svg.setAttribute("viewBox", `${b.minX} ${-b.maxY} ${b.maxX - b.minX} ${b.maxY - b.minY}`);
+    while (bg.firstChild) bg.removeChild(bg.firstChild);
+    el("rect", { x: b.minX, y: -b.maxY, width: b.maxX - b.minX, height: b.maxY - b.minY, fill: "var(--panel)" }, bg);
+    for (let gx = Math.ceil(b.minX * 2) / 2; gx <= b.maxX; gx += 0.5)
+      el("line", { x1: gx, y1: -b.maxY, x2: gx, y2: -b.minY, stroke: "var(--grid)", "stroke-width": Number.isInteger(gx) ? 1.2 : 0.6, "vector-effect": "non-scaling-stroke" }, bg);
+    for (let gy = Math.ceil(b.minY * 2) / 2; gy <= b.maxY; gy += 0.5)
+      el("line", { x1: b.minX, y1: -gy, x2: b.maxX, y2: -gy, stroke: "var(--grid)", "stroke-width": Number.isInteger(gy) ? 1.2 : 0.6, "vector-effect": "non-scaling-stroke" }, bg);
+    const sbx = b.minX + 0.3, sby = -b.minY - 0.3;
+    el("line", { x1: sbx, y1: sby, x2: sbx + 1, y2: sby, stroke: "var(--muted)", "stroke-width": 2, "vector-effect": "non-scaling-stroke" }, bg);
+    const sbt = el("text", { x: sbx + 0.5, y: sby - 0.1, "text-anchor": "middle", "font-size": 0.2, fill: "var(--muted)", "font-family": "JetBrains Mono, monospace" }, bg);
+    sbt.textContent = "1 m";
+    // the path the car drove this leg
+    el("polyline", { points: leg.frames.map(f => P(f.pose).join(",")).join(" "), fill: "none", stroke: "var(--muted)", "stroke-opacity": 0.35, "stroke-width": 1, "stroke-dasharray": "2 3", "vector-effect": "non-scaling-stroke" }, bg);
+    leg.map.forEach(c => el("circle", { cx: c.x, cy: -c.y, r: 0.085, fill: COLOR[c.c] || "var(--muted)", "fill-opacity": 0.2 }, bg));
+    slider.max = leg.frames.length - 1;
+    document.querySelectorAll("#legs .btn").forEach((b, i) => b.setAttribute("aria-pressed", String(i === st.leg)));
+  }
+
+  function draw() {
+    const leg = D.legs[st.leg];
+    const f = leg.frames[st.frame];
+    const s = st.fox ? 99 : st.step;
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    const h = f.pose[2] * Math.PI / 180;
+    const base = [f.pose[0], f.pose[1]];
+
+    if (!st.fox) {
+      const pts = [P(base)];
+      for (let a = -D.half_arc; a <= D.half_arc; a += 4) {
+        const r = a * Math.PI / 180 + h;
+        pts.push(P([base[0] + D.range * Math.cos(r), base[1] + D.range * Math.sin(r)]));
+      }
+      el("polygon", { points: pts.map(p => p.join(",")).join(" "), fill: "var(--pursuit)", "fill-opacity": 0.06, stroke: "var(--pursuit)", "stroke-opacity": 0.25, "stroke-width": 1, "vector-effect": "non-scaling-stroke" }, layer);
+    }
+
+    const keptCorr = new Set(), keptGate = new Set();
+    f.mids.forEach(m => (m.kind === "gate" ? keptGate : keptCorr).add(ekey(m.a, m.b)));
+
+    if (!st.fox && st.circ && s >= 1) {
+      f.tris.forEach(t => {
+        const c = circumcircle(t);
+        if (c && c.r < 6) el("circle", { cx: c.x, cy: -c.y, r: c.r, fill: "none", stroke: "var(--muted)", "stroke-opacity": 0.45, "stroke-width": 0.8, "vector-effect": "non-scaling-stroke" }, layer);
+      });
+    }
+
+    if (!st.fox && s >= 1) {
+      f.edges.forEach(e => {
+        const k = ekey(e[0], e[1]);
+        const a = P(e[0]), b = P(e[1]);
+        const L = { x1: a[0], y1: a[1], x2: b[0], y2: b[1], "vector-effect": "non-scaling-stroke" };
+        if (s === 1) el("line", Object.assign(L, { stroke: "var(--edge)", "stroke-opacity": 0.7, "stroke-width": 1.1 }), layer);
+        else if (keptGate.has(k)) el("line", Object.assign(L, { stroke: "var(--c-red)", "stroke-width": 2, "stroke-dasharray": "5 3" }), layer);
+        else if (keptCorr.has(k)) el("line", Object.assign(L, { stroke: "var(--edge)", "stroke-opacity": s >= 3 ? 0.45 : 0.9, "stroke-width": 1.6 }), layer);
+        else el("line", Object.assign(L, { stroke: "var(--muted)", "stroke-opacity": s >= 3 ? 0.18 : 0.35, "stroke-width": 1, "stroke-dasharray": "3 3" }), layer);
+      });
+    }
+
+    f.cones.forEach(c => {
+      const [x, y, name, src] = c;
+      if (st.fox && name === "unlabeled") return;
+      const col = COLOR[name] || "var(--muted)";
+      if (src === "geo") {
+        el("circle", { cx: x, cy: -y, r: 0.075, fill: "var(--panel)", stroke: col, "stroke-width": 3.2, "vector-effect": "non-scaling-stroke" }, layer);
+      } else {
+        el("circle", { cx: x, cy: -y, r: name === "unlabeled" ? 0.06 : 0.085, fill: col, "fill-opacity": name === "unlabeled" ? 0.6 : 1, stroke: "var(--cone-stroke)", "stroke-width": 1.2, "vector-effect": "non-scaling-stroke" }, layer);
+      }
+    });
+
+    if (s >= 3) {
+      const chainKeys = new Set(f.chain.map(key));
+      if (!st.fox) {
+        f.mids.forEach(m => {
+          const on = chainKeys.has(key(m.p)), p = P(m.p);
+          const col = m.kind === "gate" ? "var(--c-red)" : "var(--centerline)";
+          el("circle", { cx: p[0], cy: p[1], r: 0.05, fill: on ? col : "var(--panel)", stroke: col, "stroke-width": 1.5, "vector-effect": "non-scaling-stroke" }, layer);
+        });
+      }
+      if (f.chain.length > 1)
+        el("polyline", { points: f.chain.map(P).map(p => p.join(",")).join(" "), fill: "none", stroke: "var(--centerline)", "stroke-width": 3, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }, layer);
+    }
+
+    if (!st.fox && s >= 4) {
+      const A = f.axle;
+      el("circle", { cx: A[0], cy: -A[1], r: D.lookahead, fill: "none", stroke: "var(--pursuit)", "stroke-width": 1.2, "stroke-dasharray": "4 4", "vector-effect": "non-scaling-stroke" }, layer);
+      if (f.target) {
+        const dx = f.target[0] - A[0], dy = f.target[1] - A[1];
+        const lx = dx * Math.cos(h) + dy * Math.sin(h), ly = -dx * Math.sin(h) + dy * Math.cos(h);
+        const k = 2 * ly / (lx * lx + ly * ly);
+        const pts = [];
+        if (Math.abs(k) < 1e-6) pts.push(A, f.target);
+        else {
+          const th = Math.atan2(k * lx, 1 - k * ly);
+          for (let i = 0; i <= 24; i++) { const t = th * i / 24; pts.push(toWorld(A, h, Math.sin(t) / k, (1 - Math.cos(t)) / k)); }
+        }
+        el("polyline", { points: pts.map(P).map(p => p.join(",")).join(" "), fill: "none", stroke: "var(--pursuit)", "stroke-width": 2.6, "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }, layer);
+        el("circle", { cx: f.target[0], cy: -f.target[1], r: 0.07, fill: "var(--pursuit)", stroke: "var(--panel)", "stroke-width": 1.5, "vector-effect": "non-scaling-stroke" }, layer);
+      }
+      if (f.logged_target)
+        el("circle", { cx: f.logged_target[0], cy: -f.logged_target[1], r: 0.12, fill: "none", stroke: "var(--pursuit)", "stroke-width": 2, "vector-effect": "non-scaling-stroke" }, layer);
+    }
+
+    const body = [[0.04, 0.14], [0.04, -0.14], [-0.47, -0.14], [-0.47, 0.14]].map(q => P(toWorld(base, h, q[0], q[1])));
+    el("polygon", { points: body.map(p => p.join(",")).join(" "), fill: "var(--ink)", "fill-opacity": 0.85, stroke: "var(--panel)", "stroke-width": 1, "vector-effect": "non-scaling-stroke" }, layer);
+    const nose = [[0.04, 0], [-0.1, 0.08], [-0.1, -0.08]].map(q => P(toWorld(base, h, q[0], q[1])));
+    el("polygon", { points: nose.map(p => p.join(",")).join(" "), fill: "var(--panel)" }, layer);
+    if (!st.fox && s >= 4) el("circle", { cx: f.axle[0], cy: -f.axle[1], r: 0.035, fill: "var(--pursuit)" }, layer);
+
+    document.getElementById("tlabel").textContent = "t = " + f.t.toFixed(1) + " s";
+    document.getElementById("topo").textContent = (f.topo || "") + (f.armed ? "" : " · not armed");
+    const info = st.fox ? FOX : STEPS[st.step];
+    document.getElementById("explain").innerHTML = `<h2>${info.h}</h2>` + info.p.map(x => `<p>${x}</p>`).join("") + (info.eq && !st.fox ? `<div class="eq">${info.eq}</div>` : "");
+    const nGate = f.mids.filter(m => m.kind === "gate").length;
+    const cam = f.cones.filter(c => c[3] === "cam").length, geo = f.cones.filter(c => c[3] === "geo").length;
+    const fmt = v => v == null ? "none" : (v > 0 ? "+" : "") + v.toFixed(1) + "°";
+    const rows = [
+      ["Cones in view", f.cones.length],
+      ["Labeled: camera / geometry", cam + " / " + geo],
+      ["Delaunay edges", f.edges.length],
+      ["Kept: corridor / gate", (f.mids.length - nGate) + " / " + nGate],
+      ["Centerline points", f.chain.length + (f.fallback ? " (one wall)" : "")],
+      ["Steering, recomputed", fmt(f.steer)],
+      ["Steering, car logged", f.armed ? fmt(f.logged_steer) : "not armed"]
+    ];
+    document.getElementById("readout").innerHTML = rows.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join("");
+    document.querySelectorAll(".step").forEach((b, i) => {
+      if (i === st.step && !st.fox) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
+    });
+    slider.value = st.frame;
+  }
+
+  const ol = document.getElementById("steps");
+  STEPS.forEach((s, i) => {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "step"; b.id = "step-" + (i + 1);
+    b.innerHTML = `<span class="n">${i + 1}</span><span class="t">${s.t}</span>`;
+    b.addEventListener("click", () => { st.step = i; st.fox = false; foxBtn.setAttribute("aria-pressed", "false"); draw(); });
+    li.appendChild(b); ol.appendChild(li);
+  });
+
+  const legs = document.getElementById("legs");
+  D.legs.forEach((leg, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn"; b.id = "leg-" + (i + 1);
+    b.textContent = leg.name;
+    b.title = "t " + leg.span[0] + "–" + leg.span[1] + " s";
+    b.addEventListener("click", () => { setPlaying(false); st.leg = i; st.frame = D.legs[i].default || 0; setupLeg(); draw(); });
+    legs.appendChild(b);
+  });
+
+  const slider = document.getElementById("frame");
+  slider.addEventListener("input", () => { st.frame = +slider.value; draw(); });
+  const foxBtn = document.getElementById("fox");
+  foxBtn.addEventListener("click", () => { st.fox = !st.fox; foxBtn.setAttribute("aria-pressed", String(st.fox)); draw(); });
+  const circBtn = document.getElementById("circ");
+  circBtn.addEventListener("click", () => { st.circ = !st.circ; circBtn.setAttribute("aria-pressed", String(st.circ)); if (st.circ && st.step < 1) st.step = 1; draw(); });
+
+  const playBtn = document.getElementById("play");
+  function setPlaying(on) {
+    st.playing = on;
+    playBtn.textContent = on ? "Pause" : "Play";
+    playBtn.setAttribute("aria-pressed", String(on));
+    clearInterval(st.timer);
+    if (on) st.timer = setInterval(() => {
+      const n = D.legs[st.leg].frames.length;
+      if (st.frame >= n - 1) { setPlaying(false); return; }
+      st.frame++; draw();
+    }, 200);
+  }
+  playBtn.addEventListener("click", () => {
+    if (!st.playing && st.frame >= D.legs[st.leg].frames.length - 1) st.frame = 0;
+    setPlaying(!st.playing);
+  });
+  document.addEventListener("keydown", e => {
+    if (e.target && e.target.tagName === "INPUT") return;
+    const n = D.legs[st.leg].frames.length;
+    if (e.key === "ArrowRight") { st.frame = Math.min(n - 1, st.frame + 1); draw(); }
+    else if (e.key === "ArrowLeft") { st.frame = Math.max(0, st.frame - 1); draw(); }
+    else if (/^[1-5]$/.test(e.key)) { st.step = +e.key - 1; st.fox = false; foxBtn.setAttribute("aria-pressed", "false"); draw(); }
+  });
+
+  document.getElementById("logname").textContent = D.log;
+  setupLeg();
+  draw();
+})();
+</script>
