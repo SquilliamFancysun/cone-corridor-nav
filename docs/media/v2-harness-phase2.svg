@@ -1,0 +1,250 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 850" width="1200" height="850" role="img" aria-label="Phase 2 wiring. Drive pack through XT60 and a 40 amp fuse to the Flipsky VESC, which drives the Castle motor's three phases and reads its hall sensors. Stack pack through XT60 and a 10 amp fuse to the PM02, which powers the Pixhawk and feeds a screw-terminal stack bus; a 6 volt UBEC on that bus powers the Pixhawk servo rail, and the steering servo plugs into MAIN OUT 1. The ER6 receiver connects to TELEM1 over CRSF. The VESC connects to Pixhawk CAN1 with CAN high, CAN low and ground; that ground is the only link between the two packs.">
+<title>Robocar v2 Phase 2 harness</title>
+<style>
+.zone { stroke: #C4CCD4; stroke-width: 1.25; stroke-dasharray: 7 5; }
+.zone.drive { fill: #FBF0ED; }
+.zone.stack { fill: #ECF2F8; }
+.box { fill: #FFFFFF; stroke: #17202B; stroke-width: 1.5; }
+.box-off { fill: #FFFFFF; stroke: #536070; stroke-width: 1.25; stroke-dasharray: 5 4; }
+.housing { fill: #FFFFFF; stroke: #17202B; stroke-width: 1.25; }
+.pin { fill: #536070; }
+.fuse-core { stroke: #17202B; stroke-width: 1; }
+.w { fill: none; stroke-linejoin: round; stroke-linecap: butt; }
+.pos12 { stroke: #C4362A; stroke-width: 4; }
+.neg12 { stroke: #17202B; stroke-width: 4; }
+.pos16 { stroke: #C4362A; stroke-width: 2.6; }
+.neg16 { stroke: #17202B; stroke-width: 2.6; }
+.v6 { stroke: #AE6500; stroke-width: 2.6; }
+.v5 { stroke: #2460AD; stroke-width: 2.6; }
+.phase { stroke: #7442B5; stroke-width: 4; }
+.sig { stroke: #1F7D7A; stroke-width: 2.2; }
+.gnd { stroke: #17202B; stroke-width: 2.2; }
+.hl { stroke: rgba(240, 192, 24, .55); stroke-width: 12; }
+.future { stroke: #8A94A0; stroke-width: 1.8; stroke-dasharray: 6 5; }
+.rf { stroke: #536070; stroke-width: 2; stroke-dasharray: 2 5; stroke-linecap: round; }
+.t-zone { font: 700 14px "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif; letter-spacing: .1em; fill: #17202B; }
+.t-zone tspan { font-weight: 600; letter-spacing: .03em; fill: #536070; }
+.t-des { font: 500 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #536070; }
+.t-name { font: 700 16px "Arial Narrow", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif; fill: #17202B; letter-spacing: .01em; }
+.t-sub { font: 400 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #536070; }
+.t-port { font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #17202B; }
+.t-lab { font: 500 11.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #536070; }
+.t-lab.strong { font-weight: 600; fill: #17202B; }
+.t-lab.amber { fill: #AE6500; font-weight: 600; }
+.t-fut { font: 500 11.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #8A94A0; }
+.tag rect { fill: #FFFFFF; stroke: #536070; stroke-width: 1; }
+.tag text { font: 500 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #17202B; }
+.sym { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #536070; }
+</style>
+<rect x="0" y="0" width="1200" height="850" fill="#FFFFFF"/>
+<!-- Zones -->
+        <rect class="zone drive" x="12" y="12" width="404" height="766" rx="8"/>
+        <rect class="zone stack" x="428" y="12" width="760" height="766" rx="8"/>
+        <text class="t-zone" x="30" y="42">DRIVE PACK SIDE<tspan> · VESC and motor only</tspan></text>
+        <text class="t-zone" x="446" y="42">STACK PACK SIDE<tspan> · Pixhawk, receiver, servo; later the Pi</tspan></text>
+
+        <!-- ============ DRIVE SIDE ============ -->
+        <!-- W1 drive pack to VESC -->
+        <path class="w pos12" d="M212,92 H352 V250"/>
+        <path class="w neg12" d="M212,124 H310 V250"/>
+
+        <rect class="box" x="36" y="64" width="176" height="88" rx="4"/>
+        <text class="t-des" x="48" y="84">BT1</text>
+        <text class="t-name" x="48" y="104">Drive pack</text>
+        <text class="t-sub" x="48" y="122">4S1P Li-ion · P45B</text>
+        <text class="t-des" x="48" y="140">12.0–16.8 V</text>
+        <text class="sym" x="204" y="97" text-anchor="end">+</text>
+        <text class="sym" x="204" y="129" text-anchor="end">−</text>
+
+        <rect class="housing" x="232" y="80" width="30" height="56" rx="3"/>
+        <text class="t-des" x="247" y="74" text-anchor="middle">J1</text>
+        <text class="t-des" x="247" y="151" text-anchor="middle">XT60</text>
+
+        <rect class="housing" x="282" y="85" width="40" height="14" rx="7"/>
+        <line class="fuse-core" x1="286" y1="92" x2="318" y2="92"/>
+        <text class="t-des" x="302" y="76" text-anchor="middle">F1 · 40 A</text>
+
+        <g class="tag"><rect x="319" y="189" width="24" height="14" rx="3"/><text x="331" y="199.5" text-anchor="middle">W1</text></g>
+        <text class="t-lab" x="362" y="200">12 AWG</text>
+
+        <!-- VESC -->
+        <rect class="box" x="36" y="250" width="340" height="160" rx="4"/>
+        <text class="t-des" x="52" y="274">U1</text>
+        <text class="t-name" x="52" y="294">Flipsky FSESC 6.7 Pro</text>
+        <text class="t-sub" x="52" y="312">VESC 6 · FOC · hall sensored</text>
+        <text class="t-sub" x="52" y="330">Power button switches the drive side</text>
+        <text class="t-port" x="310" y="268" text-anchor="middle">B−</text>
+        <text class="t-port" x="352" y="268" text-anchor="middle">B+</text>
+        <text class="t-port" x="368" y="366" text-anchor="end">CAN</text>
+        <text class="t-port" x="92" y="400" text-anchor="middle">A</text>
+        <text class="t-port" x="124" y="400" text-anchor="middle">B</text>
+        <text class="t-port" x="156" y="400" text-anchor="middle">C</text>
+        <text class="t-port" x="300" y="400" text-anchor="middle">HALL</text>
+
+        <!-- W2 phases -->
+        <path class="w phase" d="M92,410 V587"/>
+        <path class="w phase" d="M124,410 V578"/>
+        <path class="w phase" d="M156,410 V587"/>
+        <g class="tag"><rect x="112" y="455" width="24" height="14" rx="3"/><text x="124" y="465.5" text-anchor="middle">W2</text></g>
+        <rect class="housing" x="76" y="520" width="96" height="16" rx="3"/>
+        <text class="t-des" x="182" y="532">J3 · 4 mm bullets</text>
+
+        <!-- W3 hall -->
+        <path class="w sig" d="M300,410 V640 H186"/>
+        <rect class="housing" x="290" y="470" width="20" height="16" rx="2"/>
+        <text class="t-des" x="282" y="482" text-anchor="end">J4 · JST-PH 6</text>
+        <g class="tag"><rect x="288" y="553" width="24" height="14" rx="3"/><text x="300" y="563.5" text-anchor="middle">W3</text></g>
+        <text class="t-lab" x="290" y="612" text-anchor="end">halls + temp</text>
+        <text class="t-lab" x="290" y="627" text-anchor="end">6 conductors</text>
+
+        <!-- Motor -->
+        <circle class="box" cx="124" cy="640" r="62"/>
+        <text class="t-des" x="124" y="624" text-anchor="middle">M1</text>
+        <text class="t-name" x="124" y="644" text-anchor="middle">Castle 1406</text>
+        <text class="t-sub" x="124" y="662" text-anchor="middle">1900 Kv · sensored</text>
+
+        <!-- ============ CAN crossing ============ -->
+        <path class="w sig" d="M376,352 H540"/>
+        <path class="w hl" d="M380,372 H536"/>
+        <path class="w gnd" d="M376,372 H540"/>
+        <g class="tag"><rect x="440" y="335" width="24" height="14" rx="3"/><text x="452" y="345.5" text-anchor="middle">W4</text></g>
+        <text class="t-lab" x="470" y="345">CAN H / L</text>
+        <text class="t-lab strong" x="440" y="393">GND</text>
+        <text class="t-lab" x="440" y="408">only tie between</text>
+        <text class="t-lab" x="440" y="422">the two packs</text>
+        <text class="t-lab" x="440" y="442">5 V pin left open</text>
+
+        <!-- ============ STACK SIDE ============ -->
+        <!-- W5 stack pack to PM02 -->
+        <path class="w pos16" d="M628,92 H760"/>
+        <path class="w neg16" d="M628,124 H760"/>
+
+        <rect class="box" x="452" y="64" width="176" height="88" rx="4"/>
+        <text class="t-des" x="464" y="84">BT2</text>
+        <text class="t-name" x="464" y="104">Stack pack</text>
+        <text class="t-sub" x="464" y="122">4S1P Li-ion · P45B</text>
+        <text class="t-des" x="464" y="140">12.0–16.8 V</text>
+        <text class="sym" x="620" y="97" text-anchor="end">+</text>
+        <text class="sym" x="620" y="129" text-anchor="end">−</text>
+
+        <rect class="housing" x="648" y="80" width="30" height="56" rx="3"/>
+        <text class="t-des" x="663" y="74" text-anchor="middle">J2</text>
+        <text class="t-des" x="663" y="151" text-anchor="middle">XT60</text>
+
+        <rect class="housing" x="698" y="85" width="40" height="14" rx="7"/>
+        <line class="fuse-core" x1="702" y1="92" x2="734" y2="92"/>
+        <text class="t-des" x="718" y="76" text-anchor="middle">F2 · 10 A</text>
+        <g class="tag"><rect x="706" y="104" width="24" height="14" rx="3"/><text x="718" y="114.5" text-anchor="middle">W5</text></g>
+
+        <!-- PM02 -->
+        <rect class="box" x="760" y="60" width="190" height="100" rx="4"/>
+        <text class="t-des" x="776" y="82">U2</text>
+        <text class="t-name" x="776" y="102">Holybro PM02 V3</text>
+        <text class="t-sub" x="776" y="120">V + I sense · 5.2 V / 3 A out</text>
+        <text class="t-port" x="770" y="149">XT60 in</text>
+        <text class="t-port" x="940" y="149" text-anchor="end">XT60 out</text>
+
+        <!-- W6 PM02 out to TB1 -->
+        <path class="w pos16" d="M950,92 H1164 V656 H1130"/>
+        <path class="w neg16" d="M950,124 H1144 V624 H1130"/>
+        <text class="t-lab" x="996" y="84">16 AWG</text>
+        <g class="tag"><rect x="1038" y="101" width="24" height="14" rx="3"/><text x="1050" y="111.5" text-anchor="middle">W6</text></g>
+
+        <!-- W7 PM02 to POWER1 -->
+        <path class="w v5" d="M780,160 V290"/>
+        <g class="tag"><rect x="768" y="219" width="24" height="14" rx="3"/><text x="780" y="229.5" text-anchor="middle">W7</text></g>
+        <text class="t-lab" x="760" y="224" text-anchor="end">GH-6 kit cable</text>
+        <text class="t-lab" x="760" y="239" text-anchor="end">5.2 V + V/I sense</text>
+
+        <!-- Transmitter + wireless -->
+        <rect class="box-off" x="900" y="196" width="150" height="56" rx="4"/>
+        <text class="t-name" x="912" y="219">RadioMaster Pocket</text>
+        <text class="t-sub" x="912" y="238">ELRS Tx · off the car</text>
+        <path class="w rf" d="M975,254 V288"/>
+        <text class="t-lab" x="985" y="276">2.4 GHz</text>
+
+        <!-- Pixhawk -->
+        <rect class="box" x="540" y="290" width="270" height="190" rx="4"/>
+        <text class="t-port" x="780" y="307" text-anchor="middle">POWER1</text>
+        <text class="t-port" x="800" y="324" text-anchor="end">TELEM1</text>
+        <text class="t-port" x="800" y="374" text-anchor="end">TELEM2</text>
+        <text class="t-port" x="800" y="424" text-anchor="end">I2C</text>
+        <text class="t-port" x="550" y="366">CAN1</text>
+        <text class="t-des" x="675" y="390" text-anchor="middle">U4</text>
+        <text class="t-name" x="675" y="410" text-anchor="middle">Pixhawk 6C Mini</text>
+        <text class="t-sub" x="675" y="428" text-anchor="middle">ArduPilot Rover · Model A</text>
+        <text class="t-port" x="679" y="470" text-anchor="middle">MAIN OUT 1–8 · S + −</text>
+
+        <!-- MAIN OUT header -->
+        <rect class="housing" x="556" y="480" width="246" height="30" rx="2"/>
+        <rect class="pin" x="566" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="596" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="626" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="656" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="686" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="716" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="746" y="489" width="12" height="12" rx="1"/>
+        <rect class="pin" x="776" y="489" width="12" height="12" rx="1"/>
+        <text class="t-des" x="560" y="528" text-anchor="end">1</text>
+        <text class="t-des" x="800" y="528">8</text>
+
+        <!-- W11 ER6 to TELEM1 -->
+        <path class="w sig" d="M810,320 H900"/>
+        <text class="t-lab" x="855" y="309" text-anchor="middle">CRSF</text>
+        <g class="tag"><rect x="840" y="313" width="30" height="14" rx="3"/><text x="855" y="323.5" text-anchor="middle">W11</text></g>
+        <text class="t-lab" x="855" y="342" text-anchor="middle">TX/RX crossed</text>
+
+        <rect class="box" x="900" y="290" width="150" height="70" rx="4"/>
+        <text class="t-des" x="912" y="310">U5</text>
+        <text class="t-name" x="912" y="330">RadioMaster ER6</text>
+        <text class="t-sub" x="912" y="348">ELRS → CRSF</text>
+
+        <!-- Phase 3 stubs -->
+        <path class="w future" d="M810,370 H870"/>
+        <text class="t-fut" x="878" y="374">FTDI → Pi 5 (Phase 3)</text>
+        <path class="w future" d="M810,420 H870"/>
+        <text class="t-fut" x="878" y="424">AS5600 encoder (Phase 3)</text>
+
+        <!-- W10 servo -->
+        <path class="w sig" d="M572,510 V610"/>
+        <g class="tag"><rect x="557" y="549" width="30" height="14" rx="3"/><text x="572" y="559.5" text-anchor="middle">W10</text></g>
+        <text class="t-lab" x="595" y="560">S + −</text>
+        <rect class="box" x="520" y="610" width="200" height="80" rx="4"/>
+        <text class="t-des" x="536" y="632">M2</text>
+        <text class="t-name" x="536" y="652">Feetech FT5330M</text>
+        <text class="t-sub" x="536" y="670">6–7.4 V rated · stall 3.2–3.9 A</text>
+
+        <!-- W9 buck to rail -->
+        <path class="w v6" d="M830,624 H790 V510"/>
+        <path class="w gnd" d="M830,656 H776 V510"/>
+        <g class="tag"><rect x="798" y="633" width="24" height="14" rx="3"/><text x="810" y="643.5" text-anchor="middle">W9</text></g>
+        <text class="t-lab amber" x="800" y="560">6.0 V rail</text>
+        <text class="t-lab" x="800" y="575">meter before the servo</text>
+
+        <rect class="box" x="830" y="596" width="150" height="88" rx="4"/>
+        <text class="t-des" x="846" y="618">U3</text>
+        <text class="t-name" x="846" y="638">UBEC 5A</text>
+        <text class="t-sub" x="846" y="656">Hobbywing · 6.0 V out</text>
+
+        <!-- W8 TB1 to buck -->
+        <path class="w neg16" d="M1010,624 H980"/>
+        <path class="w pos16" d="M1010,656 H980"/>
+        <g class="tag"><rect x="983" y="633" width="24" height="14" rx="3"/><text x="995" y="643.5" text-anchor="middle">W8</text></g>
+
+        <rect class="box" x="1010" y="600" width="120" height="80" rx="4"/>
+        <text class="t-des" x="1022" y="622">TB1</text>
+        <text class="t-name" x="1022" y="642">Stack bus</text>
+        <text class="t-sub" x="1022" y="660">screw terminals</text>
+
+        <path class="w future" d="M1070,680 V722"/>
+        <text class="t-fut" x="1070" y="740" text-anchor="middle">Pi 5 and sensor bucks (Phase 3)</text>
+<!-- Legend -->
+<g transform="translate(24,806)"><line x1="0" y1="0" x2="34" y2="0" stroke="#C4362A" stroke-width="4"/><text class="t-lab" x="44" y="4">4S battery + (thick 12 AWG, thin 16 AWG)</text></g>
+<g transform="translate(320,806)"><line x1="0" y1="0" x2="34" y2="0" stroke="#17202B" stroke-width="3"/><text class="t-lab" x="44" y="4">Ground / −</text></g>
+<g transform="translate(616,806)"><line x1="0" y1="0" x2="34" y2="0" stroke="#AE6500" stroke-width="3"/><text class="t-lab" x="44" y="4">6 V servo rail</text></g>
+<g transform="translate(912,806)"><line x1="0" y1="0" x2="34" y2="0" stroke="#2460AD" stroke-width="3"/><text class="t-lab" x="44" y="4">5.2 V flight-controller supply</text></g>
+<g transform="translate(24,832)"><line x1="0" y1="0" x2="34" y2="0" stroke="#7442B5" stroke-width="4"/><text class="t-lab" x="44" y="4">Motor phases</text></g>
+<g transform="translate(320,832)"><line x1="0" y1="0" x2="34" y2="0" stroke="#1F7D7A" stroke-width="2.5"/><text class="t-lab" x="44" y="4">Signal cable</text></g>
+<g transform="translate(616,832)"><line x1="0" y1="0" x2="34" y2="0" stroke="rgba(240, 192, 24, .55)" stroke-width="11"/><line x1="0" y1="0" x2="34" y2="0" stroke="#17202B" stroke-width="2.2"/><text class="t-lab" x="44" y="4">Pack-to-pack ground tie (W4 GND)</text></g>
+<g transform="translate(912,832)"><line x1="0" y1="0" x2="34" y2="0" stroke="#8A94A0" stroke-width="2" stroke-dasharray="6 5"/><text class="t-lab" x="44" y="4">Phase 3 attachment</text></g>
+</svg>
