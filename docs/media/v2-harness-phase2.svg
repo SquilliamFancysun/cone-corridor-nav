@@ -234,7 +234,7 @@
         <rect class="box" x="1010" y="600" width="120" height="80" rx="4"/>
         <text class="t-des" x="1022" y="622">TB1</text>
         <text class="t-name" x="1022" y="642">Stack bus</text>
-        <text class="t-sub" x="1022" y="660">screw terminals</text>
+        <text class="t-sub" x="1022" y="660">WAGO 221-415 ×2</text>
 
         <path class="w future" d="M1070,680 V722"/>
         <text class="t-fut" x="1070" y="740" text-anchor="middle">Pi 5 and sensor bucks (Phase 3)</text>

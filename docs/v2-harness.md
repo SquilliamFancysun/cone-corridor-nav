@@ -44,16 +44,16 @@ joining the two sides.
 | W3 | M1 sensor lead → U1 HALL | 5V H1 H2 H3 T GND | Cut Castle lead, crimp JST-PH 6 (J4) | stock | 5 V, GND and temp must land on the right pins; hall order is free |
 | W4 | U1 CAN ↔ U4 CAN1 | H L GND | JST-PH 4 ↔ JST-GH 4 | GH kit wire | Twist H/L. 5 V open. GND is the pack-to-pack tie |
 | W5 | BT2 stack pack → U2 PM02 in | + − | Pack XT60 → J2 fused XT60 pigtail → PM02 XT60 | 16 AWG | F2 10 A in the + leg |
-| W6 | U2 PM02 out → TB1 | + − | PM02 XT60 → screw terminals | 16 AWG | Every stack load taps TB1, so the PM02 measures the whole stack |
+| W6 | U2 PM02 out → TB1 | + − | PM02 XT60 out → XT60 pigtail → TB1 + and − connectors | 16 AWG | Every stack load taps TB1, so the PM02 measures the whole stack. The drive pack never lands here |
 | W7 | U2 PM02 → U4 POWER1 | 5.2V V I GND | GH-6 cable from the PM02 set | stock | The Pixhawk's only supply apart from USB |
-| W8 | TB1 → U3 UBEC in | + − | UBEC input leads into the screw terminals | 22 AWG (stock) | 2–8S input |
+| W8 | TB1 → U3 UBEC in | + − | UBEC input leads into TB1, 11 mm strip, no ferrule | 22 AWG (stock) | 2–8S input |
 | W9 | U3 UBEC out → U4 MAIN OUT col 8 | 6V GND | UBEC JR output lead, signal pin empty | stock | Feeds the whole rail. Jumper on 6.0 V; meter it first |
 | W10 | M2 servo → U4 MAIN OUT 1 | S + − | Servo plug | stock | ArduRover's default steering output |
 | W11 | U5 ER6 ↔ U4 TELEM1 | 5V TX RX GND | ER6 CRSF lead re-pinned into GH-6 | GH kit wire | Pin 1 5 V · pin 2 TX → ER6 RX · pin 3 RX ← ER6 TX · pin 6 GND · pins 4, 5 empty |
 | W12 *(Phase 3)* | FTDI ↔ U4 TELEM2 | TX RX GND | GH-6 lead soldered to the FTDI | GH kit wire | FTDI TX → pin 3 · RX → pin 2 · GND → pin 6 · FTDI set to 3.3 V |
 
 Designators: BT1/BT2 packs, J1–J4 connectors, F1/F2 fuses, U1 FSESC 6.7 Pro,
-U2 PM02 V3, U3 ZTW UBEC 8A G2, U4 Pixhawk 6C Mini, U5 ER6, TB1 stack bus,
+U2 PM02 V3, U3 ZTW UBEC 8A G2, U4 Pixhawk 6C Mini, U5 ER6, TB1 stack bus (two WAGO 221-415, one per rail),
 M1 Castle 1406-1900Kv, M2 Feetech FT5330M.
 
 ### Settings this wiring assumes
