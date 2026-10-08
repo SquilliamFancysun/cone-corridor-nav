@@ -27,8 +27,9 @@ joining the two sides.
   Leave the 5 V pin open. With both packs off, CAN H to CAN L should read about 60 Ω;
   at about 120 Ω, add one 120 Ω resistor.
 - **Check 6.0 V before the servo goes on.** The Pixhawk does not regulate its servo
-  rail; whatever the UBEC makes goes straight to the servo. Its output select also
-  offers 5.0 and 7.4 V. The rail tolerates 0–36 V; the FT5330M is rated 6–7.4 V.
+  rail; whatever the UBEC makes goes straight to the servo. Its jumper also offers
+  5.0, 7.4 and 8.4 V, and 8.4 V would overdrive the servo. The rail tolerates
+  0–36 V; the FT5330M is rated 6–7.4 V.
 - **Fuse at the packs.** F1 (40 A) and F2 (10 A) sit right after each pack connector.
   Keep the VESC battery current limit at 30 A or less so F1 only opens on a fault.
 - **Retain the friction-fit plugs.** MAIN OUT is a plain 2.54 mm header. W9 and W10
@@ -45,14 +46,14 @@ joining the two sides.
 | W5 | BT2 stack pack → U2 PM02 in | + − | Pack XT60 → J2 fused XT60 pigtail → PM02 XT60 | 16 AWG | F2 10 A in the + leg |
 | W6 | U2 PM02 out → TB1 | + − | PM02 XT60 → screw terminals | 16 AWG | Every stack load taps TB1, so the PM02 measures the whole stack |
 | W7 | U2 PM02 → U4 POWER1 | 5.2V V I GND | GH-6 cable from the PM02 set | stock | The Pixhawk's only supply apart from USB |
-| W8 | TB1 → U3 UBEC in | + − | UBEC input leads into the screw terminals | stock | 2–8S input |
-| W9 | U3 UBEC out → U4 MAIN OUT col 8 | 6V GND | UBEC output lead (servo plug, signal pin empty) | stock | Feeds the whole rail. Meter 6.0 V first |
+| W8 | TB1 → U3 UBEC in | + − | UBEC input leads into the screw terminals | 22 AWG (stock) | 2–8S input |
+| W9 | U3 UBEC out → U4 MAIN OUT col 8 | 6V GND | UBEC JR output lead, signal pin empty | stock | Feeds the whole rail. Jumper on 6.0 V; meter it first |
 | W10 | M2 servo → U4 MAIN OUT 1 | S + − | Servo plug | stock | ArduRover's default steering output |
 | W11 | U5 ER6 ↔ U4 TELEM1 | 5V TX RX GND | ER6 CRSF lead re-pinned into GH-6 | GH kit wire | Pin 1 5 V · pin 2 TX → ER6 RX · pin 3 RX ← ER6 TX · pin 6 GND · pins 4, 5 empty |
 | W12 *(Phase 3)* | FTDI ↔ U4 TELEM2 | TX RX GND | GH-6 lead soldered to the FTDI | GH kit wire | FTDI TX → pin 3 · RX → pin 2 · GND → pin 6 · FTDI set to 3.3 V |
 
 Designators: BT1/BT2 packs, J1–J4 connectors, F1/F2 fuses, U1 FSESC 6.7 Pro,
-U2 PM02 V3, U3 Hobbywing UBEC 5A, U4 Pixhawk 6C Mini, U5 ER6, TB1 stack bus,
+U2 PM02 V3, U3 ZTW UBEC 8A G2, U4 Pixhawk 6C Mini, U5 ER6, TB1 stack bus,
 M1 Castle 1406-1900Kv, M2 Feetech FT5330M.
 
 ### Settings this wiring assumes
@@ -105,7 +106,7 @@ M1 Castle 1406-1900Kv, M2 Feetech FT5330M.
 - [Holybro: Pixhawk 6C Mini ports and pinouts](https://docs.holybro.com/autopilot/pixhawk-6c-mini/pixhawk-6c-mini-ports)
 - [PX4: Holybro Pixhawk 6C Mini](https://docs.px4.io/main/en/flight_controller/pixhawk6c_mini.html) (power ratings, servo rail)
 - [PX4: Holybro PM02](https://docs.px4.io/main/en/power_module/holybro_pm02.html)
-- [Hobbywing: UBEC 5A](https://hobbywingdirect.com/products/ubec-5a-air)
+- [ZTW UBEC 8A G2 (Amazon listing)](https://www.amazon.com/dp/B0CMD126S4)
 - [RadioMaster: ER6 receiver](https://radiomasterrc.com/products/er6-2-4ghz-elrs-pwm-receiver)
 - [RobotShop: Feetech FT5330M](https://www.robotshop.com/products/feetech-180-degrees-digital-servo-74v-35kg-cm-ft5330m) · [ServoDatabase: FT5330M current](https://servodatabase.com/servo/feetech/ft5330m)
 - [ArduPilot: DroneCAN setup](https://ardupilot.org/rover/docs/common-uavcan-setup-advanced.html) · [ArduPilot: CAN bus setup](https://ardupilot.org/rover/docs/common-canbus-setup-advanced.html)
