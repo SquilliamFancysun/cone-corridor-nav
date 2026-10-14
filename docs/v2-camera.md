@@ -14,6 +14,13 @@ The unit enumerates as **"Insta360 ONE X2"** (serial `IXSE50FNMCWME9`); the
 other v2 docs call it the X2. It is a **USB 2.0** device (480 Mbps) in every
 mode, so it needs none of the SuperSpeed cabling v1's OAK-D did.
 
+That limit is the camera's, not the cable's: it declares `bcdUSB` 0x0200 in both
+modes, measured on a USB 3.1 host port. A USB 3 device declares 0x0210 or
+higher even when it falls back to a 2.0 link. Any USB-C data cable works, and a
+USB 3 cable buys nothing. Choose the cable for length, a right-angle end and
+strain relief. Since the camera never drives the SuperSpeed pairs, it adds none
+of the 2.4 GHz noise USB 3 links are known for, whatever port or cable it's on.
+
 Its USB identity depends on the USB mode set on the camera:
 
 | USB mode | VID:PID | Vendor string | Appears as | Used by |
