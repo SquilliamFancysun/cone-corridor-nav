@@ -147,6 +147,8 @@ Phase 3 or later.
 | Lidar: LDROBOT STL-27L 2D lidar (Phase 4) | Decided | 2026-09-26 | The class's 2D lidar worked; 3D isn't worth the price. The STL-27L adds resolution (0.167°) and outdoor light rejection. |
 | Camera: owned Insta360 X2 (Phase 4), used for 360° semantics for the planner | Decided | 2026-09 | Kept out of the control loop under the 2026-10-01 sysid and MPC plan. |
 | Mount the X2 with one lens facing forward, on the lidar's vertical axis | Recommended | 2026-09-16 | Left/right lenses put the stitch seam dead ahead, where its error can't be calibrated out. Co-locating camera and lidar in x–y reduces extrinsics to one yaw offset. A 45° yaw is the compromise if side classification matters. |
+| Camera and lidar co-located on one vertical axis, aiming for close to full 360° in both; some occlusion accepted, then measured | Decided | 2026-10-14 | Will's goal for the sensor mount. Settles the co-location half of the row above; its lens orientation stays Recommended. Whatever holds the upper sensor blanks a wedge of the lower one, so measure the occluded arcs once the mount exists. |
+| Read the X2 in USB webcam mode: a UVC camera carrying the full 360°, stitched on the camera, as two stacked 180° strips at up to 1920×1080, 30 fps. The CameraSDK only if that falls short | Recommended | 2026-10-14 | Measured in [`v2-camera.md`](v2-camera.md). No vendor SDK and no stitching on the Pi, and about 10.7 px/° horizontally against v1's 6. The cost is a band around the horizon rather than the full sphere; its extent isn't measured yet. Raw dual fisheye needs the CameraSDK in Android mode. |
 | Biggest fusion error sources, in order: lidar plane height, then time sync and motion skew (deskew scans with odometry) | Recommended | 2026-09-16 | |
 
 ### Software runtime
@@ -164,6 +166,7 @@ Phase 3 or later.
 | robot_localization and Nav2 are reference baselines only, never in the loop | Conditional | 2026-10-07 | Initial configuration. |
 | One command, or systemd at boot, starts the whole stack | Conditional | 2026-10-07 | Checkpoint B criterion 4. |
 | Cone detector compiled for the Hailo | Open | 2026-10-07 | Needed with or without ROS. Checkpoint A only uses a stock model-zoo YOLO as a stand-in. |
+| Train a new cone detector on X2 images; v1's `weights-v3` isn't carried over | Decided | 2026-10-14 | Will's decision. v1's detector learnt rectilinear 416×234 OAK-D frames. Which X2 image it trains on is open (see Open items), and has to be fixed before capture, since training images must match what the car sees at run time. |
 
 ### Data, logging and visualization
 
@@ -440,8 +443,15 @@ Ordered roughly by when they block work.
       the NUCLEO. Decide how Pixhawk sample times map to Pi time.
 - [ ] **Phase 3 power.** Buck specs (Pi, lidar, sensors), the Pi feed path, and
       local bulk capacitance.
-- [ ] **Insta360 X2 on the Pi.** USB webcam mode, whether it draws USB power,
-      and whether raw dual-fisheye frames are available.
+- [ ] **Insta360 X2 on the Pi.** Partly answered 2026-10-14 in
+      [`v2-camera.md`](v2-camera.md): webcam mode works and sends the full 360°
+      stitched on the camera; raw dual fisheye is available only through the
+      CameraSDK in Android mode. Still open: the band's vertical extent and
+      whether it holds the horizon, where the stitch seams fall in the frame,
+      the wire format on the Pi (MJPEG or H.264), USB power draw and charging,
+      heat over a session, and latency.
+- [ ] **Detector training input.** Webcam strips, raw fisheye, or perspective
+      crops cut from either. Fix it before capturing training data.
 - [ ] **STL-27L connection.** Confirm the kit's USB adapter and which rail
       powers its motor.
 - [ ] **Stack grid.** Whether to bring back interleaved top/bottom grids now
@@ -466,6 +476,7 @@ the record of them.
 
 | Date | Chat | Covered |
 |---|---|---|
+| 2026-10-14 | Claude Code session in this repo (not a Project chat) | X2 identified and measured in webcam mode, co-location goal, new detector |
 | 2026-10-14 | Robocar v2 dashboard and ROS2 migration | Foxglove, ROS 2 decision (ADR-001), interface proposal |
 | 2026-10-14 | FDM vs resin printer performance | Resin vs FDM, acrylic handling |
 | 2026-10-07 | Phase 2 wiring diagram and BOM | Harness, UBEC, WAGO TB1, fuses |
