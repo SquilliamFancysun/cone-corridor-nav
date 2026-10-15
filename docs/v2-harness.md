@@ -41,8 +41,8 @@ joining the two sides.
 |---|---|---|---|---|---|
 | W1 | BT1 drive pack → U1 VESC battery | + − | Pack XT60 → J1 XT60 → F1 inline blade holder → soldered to FSESC bare leads | 12 AWG | F1 40 A in the + leg, a few cm from J1 |
 | W2 | U1 phases → M1 | A B C | 4 mm bullets soldered to FSESC leads, mating the motor's (J3) | FSESC leads | Any order; set direction in VESC Tool |
-| W3 | M1 sensor lead → U1 HALL | 5V H1 H2 H3 T GND | Cut Castle lead, crimp JST-PH 6 (J4) | stock | 5 V, GND and temp must land on the right pins; hall order is free |
-| W4 | U1 CAN ↔ U4 CAN1 | H L GND | JST-PH 4 ↔ JST-GH 4 | GH kit wire | Twist H/L. 5 V open. GND is the pack-to-pack tie |
+| W3 | M1 sensor lead → U1 SENSE | GND H3 H2 H1 TEMP V+ | Cut Castle lead, crimp JST-PH 6 (J4) | stock | Port order per the Flipsky manual. GND, TEMP and V+ must land right; hall order is free. Sensor-voltage jumper on 5 V |
+| W4 | U1 CAN ↔ U4 CAN1 | H L GND | JST-PH 4 ↔ JST-GH 4 | GH kit wire | VESC port is 5V · CANH · CANL · GND; Pixhawk is 5V · H · L · GND. Twist H/L. 5 V open on both ends. GND is the pack-to-pack tie |
 | W5 | BT2 stack pack → U2 PM02 in | + − | Pack XT60 → J2 fused XT60 pigtail → PM02 XT60 | 16 AWG | F2 10 A in the + leg |
 | W6 | U2 PM02 out → TB1 | + − | PM02 XT60 out → XT60 pigtail → TB1 + and − connectors | 16 AWG | Every stack load taps TB1, so the PM02 measures the whole stack. The drive pack never lands here |
 | W7 | U2 PM02 → U4 POWER1 | 5.2V V I GND | GH-6 cable from the PM02 set | stock | The Pixhawk's only supply apart from USB |
@@ -94,8 +94,17 @@ M1 Castle 1406-1900Kv, M2 Feetech FT5330M.
 ### Check when the parts arrive
 
 - **Pack connector.** The drawing assumes XT60, which most 4S Li-ion packs ship with.
-- **FSESC 6.7 Pro CAN and HALL pin order.** Read it off the board silkscreen before
-  crimping W3 and W4.
+- **FSESC 6.7 Pro ports.** The case has no labels; the [Flipsky manual](https://cdn.shopify.com/s/files/1/0011/4039/1996/files/FSESC_6.7_PRO_-_a_b_compressed.pdf)
+  is the map. CAN is the only 4-pin port, at the top of the case window beside the
+  micro USB. Before crimping, confirm GND by continuity to the battery − lead (power
+  off) and 5 V with a meter (power on). If CAN doesn't come up, swap H and L.
+- **Sensor-voltage jumper.** A 3-pin jumper next to SENSE picks 3.3 V or 5 V for the
+  hall supply. Set it to 5 V, which RC sensored motors expect.
+- **FSESC accessories.** Flipsky lists a micro-USB cable, a sensor cable and a PPM
+  cable in the box. None is required for this harness.
+- **FSESC minimum input voltage.** The Flipsky manual says 14–60 V, its store page
+  8–60 V, and a 4S Li-ion pack runs 16.8 V down to 12.0 V. Run the drive pack down on
+  the bench and note whether the VESC faults under 14 V.
 - **Castle sensor-lead colors.** Meter 5 V, GND and temp before cutting. If the
   VESC's motor temperature reads nonsense, disable that sensor in VESC Tool.
 - **W1 length.** If the battery leads end up past about 15 cm, put a bulk capacitor
@@ -103,6 +112,7 @@ M1 Castle 1406-1900Kv, M2 Feetech FT5330M.
 
 ## Sources
 
+- [Flipsky: FSESC 6.7 Pro aluminum case manual](https://cdn.shopify.com/s/files/1/0011/4039/1996/files/FSESC_6.7_PRO_-_a_b_compressed.pdf) (port map and pinouts)
 - [Holybro: Pixhawk 6C Mini ports and pinouts](https://docs.holybro.com/autopilot/pixhawk-6c-mini/pixhawk-6c-mini-ports)
 - [PX4: Holybro Pixhawk 6C Mini](https://docs.px4.io/main/en/flight_controller/pixhawk6c_mini.html) (power ratings, servo rail)
 - [PX4: Holybro PM02](https://docs.px4.io/main/en/power_module/holybro_pm02.html)
