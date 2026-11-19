@@ -96,6 +96,10 @@ BT2 − ── J2 ────────────────────�
 Keep the run from each pack connector to its fuse short. Everything after the fuse is
 protected, so the fuse-to-port lead can be as long as the route to the shell needs.
 
+The FSESC keeps its own power button: the case drawing in the Flipsky manual labels
+an anti-spark switch button. K1 supplies the drive side and the button turns the VESC
+on. Pulling K1 kills the drive side whatever the button is set to.
+
 ### Settings this wiring assumes
 
 | Where | Setting | Value |
@@ -124,8 +128,9 @@ protected, so the fuse-to-port lead can be as long as the route to the shell nee
 5. Arm from the transmitter. With the wheels spinning, unplug W4; the motor should
    stop within the VESC timeout. This is the stop time ADR-001 Checkpoint B asks for.
 6. Keys: with both packs plugged in and both keys out, the VESC, Pixhawk and ER6 stay
-   dark. Seat K2 and the stack boots. Seat K1 and the VESC boots without a spark at
-   the key. With the wheels off the ground and spinning, pull K1; the motor stops.
+   dark. Seat K2 and the stack boots. Seat K1 with no spark at the key, then press
+   the VESC's button and it boots. With the wheels off the ground and spinning, pull
+   K1; the motor stops.
 
 ### Bring-up log
 

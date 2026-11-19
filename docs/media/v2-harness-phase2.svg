@@ -83,7 +83,7 @@
         <text class="t-des" x="52" y="274">U1</text>
         <text class="t-name" x="52" y="294">Flipsky FSESC 6.7 Pro</text>
         <text class="t-sub" x="52" y="312">VESC 6 · FOC · hall sensored</text>
-        <text class="t-sub" x="52" y="330">Powered only while K1 is seated in J5</text>
+        <text class="t-sub" x="52" y="330">K1 supplies it; its power button turns it on</text>
         <text class="t-port" x="310" y="268" text-anchor="middle">B−</text>
         <text class="t-port" x="352" y="268" text-anchor="middle">B+</text>
         <text class="t-port" x="368" y="366" text-anchor="end">CAN</text>
