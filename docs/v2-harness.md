@@ -4,7 +4,8 @@ _How v2 is wired, phase by phase. Each phase's parts come from the Robocar v2 BO
 (a Claude Docs page outside the repo); this file is the record of how they connect.
 Update the wire list as the harness is built, and log every measured value below._
 
-**Status:** Phase 2 drawn 2026-10-07; arming keys added 2026-10-15. Not yet built.
+**Status:** Phase 2 drawn 2026-10-07; arming keys added 2026-10-15. Wired 2026-11-12;
+first power-up under way (see the bring-up log).
 
 ## Phase 2: radio-controlled car
 
@@ -108,8 +109,10 @@ on. Pulling K1 kills the drive side whatever the button is set to.
 | ArduPilot | `SERVO1_FUNCTION` | 26, ground steering (Rover default) |
 | ArduPilot | `CAN_P1_DRIVER` · `CAN_D1_PROTOCOL` | 1 · 1 (DroneCAN) |
 | ArduPilot | `SERVO3_FUNCTION` · `CAN_D1_UC_ESC_BM` | 70 throttle · 4 (output 3 → ESC index 2) |
+| ArduPilot | `CAN_D1_UC_ESC_RV` | 4, the same bit. Without it, Rover's neutral reaches the VESC as about half throttle |
+| ArduPilot | `BRD_SAFETY_DEFLT` | 0: no safety switch is wired, and at 1 the outputs stay off |
 | VESC Tool | CAN mode · CAN ID · ESC index | UAVCAN · 1 (avoid 0) · 2 |
-| Both | CAN bitrate | Must match; ArduPilot defaults to 1 Mbit/s |
+| Both | CAN bitrate | Must match; ArduPilot defaults to 1 Mbit/s and the VESC ships at 500K, so set the VESC to 1M |
 | VESC Tool | App timeout + brake current | About 0.5 s, so a dead CAN link stops the car |
 | VESC Tool | Battery current max | 30 A or less, below F1 |
 
@@ -122,7 +125,7 @@ on. Pulling K1 kills the drive side whatever the button is set to.
 2. Stack pack only, servo unplugged: the Pixhawk boots and its PM02 voltage matches
    the pack. Read 6.0 V at MAIN OUT col 8 from the UBEC.
 3. Plug in the servo, bind the ER6, and confirm the RC channels move in Mission
-   Planner.
+   Planner or QGroundControl.
 4. Drive pack, wheels off the ground: run motor and hall detection in VESC Tool over
    USB, then hand throttle to CAN.
 5. Arm from the transmitter. With the wheels spinning, unplug W4; the motor should
@@ -138,7 +141,7 @@ on. Pulling K1 kills the drive side whatever the button is set to.
 |---|---|---|
 | CAN H–L resistance, packs off | | |
 | Servo rail at MAIN OUT col 8 | | |
-| PM02 voltage vs. meter at the stack pack | | |
+| PM02 voltage vs. meter at the stack pack | 15.37 V on the Pixhawk vs. 15.66 V on the balance charger (no meter used); `BATT_VOLT_MULT` recalculated from 18.18 to about 18.52 | 2026-11-25 |
 | Stop time after unplugging W4 | | |
 | Spark when seating K1 / K2 (none, small, large) | | |
 
