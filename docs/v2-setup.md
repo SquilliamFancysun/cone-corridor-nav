@@ -115,10 +115,12 @@ Phase 3 or later.
 
 | Decision | Status | Since | Why, and details |
 |---|---|---|---|
-| Holybro Pixhawk 6C Mini (Model A) + PM02 V3, running ArduPilot Rover | Decided, ordered | 2026-10-05 | A proven ecosystem owns RC input, failsafe, actuators and logging, so effort goes into sysid, MPC and autonomy. The H743 chip has room for Lua scripting. ArduPilot Rover over PX4 because PX4's Ackermann rover module is still experimental. |
-| RadioMaster Pocket (ELRS) with a RadioMaster ER6 receiver | Decided, in hand | 2026-10-04 | The ER6's CRSF lead is re-pinned into a GH-6 for TELEM1 (pin 2 TX to ER6 RX, pin 3 RX from ER6 TX). |
+| Holybro Pixhawk 6C Mini (Model A) + PM02 V3, running ArduPilot Rover | Decided, in place | 2026-10-05 | A proven ecosystem owns RC input, failsafe, actuators and logging, so effort goes into sysid, MPC and autonomy. The H743 chip has room for Lua scripting. ArduPilot Rover over PX4 because PX4's Ackermann rover module is still experimental. Flashed 2026-11-24 from QGroundControl 5.1.5 with the `Pixhawk6C` Rover build, replacing the factory PX4. |
+| RadioMaster Pocket (ELRS) with a RadioMaster ER6 receiver | Decided, in place | 2026-10-04 | The ER6's CRSF lead is re-pinned into a GH-6 for TELEM1 (pin 2 TX to ER6 RX, pin 3 RX from ER6 TX). Bound 2026-11-24 by power-cycling the ER6 three times over the Pixhawk's USB power. |
+| RC channel map: steering on CH1 (right stick, horizontal), throttle on CH2 (right stick, vertical) | Decided, in place | 2026-11-24 | Throttle sits on a self-centering stick, so letting go returns it to center, which Rover reads as stop. Matches the Oct 4 EdgeTX plan for steering and throttle. QGroundControl 5.1.5's radio calibration writes the stick's minimum into the throttle channel's trim, which Rover would read as about half forward at center, so reset `RC2_TRIM` to the centered value after every calibration. |
 | Steering on MAIN OUT 1; throttle to the VESC over DroneCAN | Decided | 2026-10-07 | ArduRover's default steering output. |
 | A transmitter switch gates every Pi command | Decided | 2026-10-07 | ADR-001 Checkpoint B criterion 2. |
+| Deadman for autonomy: the Pocket's momentary SE button on CH9, held while the Pi drives | Decided | 2026-11-25 | Will's choice. Carries over v1's held-button deadman (the F710's X button), which ADR-001 moves to the Pixhawk. Enforce it on the Pixhawk, not only on the Pi, so it still stops a misbehaving autonomy stack. Mechanism: see `RC9_OPTION` under Configuration. |
 | A dead CAN link stops the car (VESC app timeout about 0.5 s plus brake current) | Decided | 2026-10-07 | Measured in harness first power-up step 5 by unplugging W4. |
 | Losing the Pi's command node stops the car on its own | Decided, mechanism open | 2026-10-07 | ADR-001 Checkpoint B criterion 3. The VESC timeout doesn't cover this: the Pixhawk keeps sending DroneCAN commands when the Pi goes quiet. The stop has to come from ArduPilot, through a Guided-mode command timeout, a companion heartbeat failsafe, or a timeout inside the Lua relay. The harness's step 5 note treats the two cases as one. |
 | Pi to Pixhawk: DSD TECH SH-U09C5 (genuine FTDI FT232RNL) into TELEM2 | Decided, ordered | 2026-10-05 | Set to 3.3 V. FTDI TX to pin 3, RX to pin 2, GND to pin 6; VCC, CTS and RTS left off. Keeps the locking connector at the Pixhawk end. |
@@ -248,13 +250,24 @@ Values the decisions above imply. Rows marked _harness_ are copied from
 | `SERIAL1_PROTOCOL` | 23, RC input (CRSF on TELEM1) | Decided, _harness_ |
 | `SERVO1_FUNCTION` | 26, ground steering | Decided, _harness_ |
 | `CAN_P1_DRIVER` · `CAN_D1_PROTOCOL` | 1 · 1 (DroneCAN) | Decided, _harness_ |
-| `SERVO3_FUNCTION` · `CAN_D1_UC_ESC_BM` | 70 throttle · 4 (output 3 → ESC index 2) | Decided, _harness_ |
+| `SERVO3_FUNCTION` · `CAN_D1_UC_ESC_BM` | 70 throttle · 4 (output 3 → ESC index 2). QGC's checkbox for bit 2 is labelled "ESC 3" | Decided, _harness_ |
+| `CAN_D1_UC_ESC_RV` | 4, the same bit as `CAN_D1_UC_ESC_BM`. Without it ArduPilot sends only 0 to +8191, so Rover's neutral reaches the VESC as about half command. Not yet in the harness settings table | In place 2026-11-24 |
 | CAN bitrate | Must match the VESC; ArduPilot defaults to 1 Mbit/s | Decided, _harness_ |
+| `BRD_SAFETY_DEFLT` | 0. The 6C Mini has no safety button of its own (Holybro puts it on the GPS module), and at the default of 1 the outputs stay off and arming fails | In place 2026-11-24 |
+| `COMPASS_ENABLE` | 0, carrying out the no-magnetometer decision | In place 2026-11-24 |
+| `RC_OPTIONS` · `RSSI_TYPE` | Bit 13 set, for ELRS at 420 kbaud · 3, link quality from the receiver | In place 2026-11-24 |
+| `AHRS_ORIENTATION` | Yaw 180: the board lies flat with its arrow pointing rearward | In place 2026-11-24 |
+| `SERVO1_REVERSED` | 1. The radio input reads stick-right as right; the servo linkage needs the output flipped. Fix direction here, never with `RC1_REVERSED` | In place 2026-11-24 |
 | TELEM2 (`SERIAL2_*`) | MAVLink 2 for MAVROS; baud not chosen | Open |
 | `SCR_ENABLE` | 1, for the AS5600 reader and a Level A relay | Recommended |
-| RC channel map, arm switch, mode switch, RC failsafe action | Not set. ArduPilot Rover's defaults differ from the Oct 4 EdgeTX plan (CH1 steering, CH2 throttle, CH5 arm), so pick one and record it here | Open |
+| `RCMAP_ROLL` · `RCMAP_THROTTLE` · `RCMAP_PITCH` · `RCMAP_YAW` | 1 · 2 · 3 · 4 (steering CH1, throttle CH2) | In place 2026-11-24 |
+| `RC2_TRIM` | The centered stick value, about 1500. Reset it after every QGC radio calibration | In place 2026-11-24 |
+| `FS_ACTION` | 2, Hold on RC loss. Getting back to Manual afterwards takes the mode switch | In place 2026-11-25 |
+| Arm switch and mode switch | SA on CH5 arms (`RC5_OPTION` 153); SC on CH7 picks the mode (`MODE_CH` 7: Hold at one end, Manual in the other two positions). The same switches as Yellow's Pocket (`yellow-build/config/my_joystick.py`; a separate radio). SB (CH6) and SD (CH8) stay unassigned. Arming, mode changes and the RC-loss Hold all passed with the motor unpowered | In place 2026-11-25 |
+| `RC9_OPTION` | 55 (Guided), for the SE deadman. Holding SE enters Guided; releasing it returns to the mode SC selects (Rover's `do_aux_function_change_mode`). Keep SC on Hold for autonomous runs, so letting go means stop. Guided can't engage until the Pi supplies a position estimate, so this does nothing before Phase 3. Measure release-to-stop time at Checkpoint B: ELRS sends CH9 round-robin, less often than CH5 | In place 2026-11-25 |
 | ESC telemetry stream rate to the Pi | Request a fixed rate, then measure what arrives | Open |
 | Stop on loss of Pi commands | Guided-mode command timeout, companion heartbeat failsafe, or a timeout in the Lua relay | Open |
+| Battery monitor (PM02, stack pack) | `BATT_MONITOR` 4 (analog voltage and current); `BATT_VOLT_MULT` recalculated from the firmware's 18.18 to about 18.52 against the balance charger (15.37 V read, 15.66 V actual; see the harness bring-up log); `BATT_AMP_PERVLT` 36.36, not yet checked against a known load; `BATT_CAPACITY` 4500 mAh | In place 2026-11-25 |
 | Battery monitor (PM02, stack pack) low and critical thresholds | Li-ion values; ties into the stack-pack undervoltage plan | Open |
 
 ### VESC (Flipsky FSESC 6.7 Pro, VESC Tool)
@@ -271,6 +284,9 @@ Values the decisions above imply. Rows marked _harness_ are copied from
 | ERPM limit | Caps top speed in software; value open | Recommended |
 | Battery low-voltage cutoff (start / end) | Use Li-ion values, never the LiPo default. Chats proposed 13.2 / 12.0 V, 13.6 / 13.2 V and 12.8 / 12.0 V; pick one | Open |
 | Motor temperature sensor | Disable it if the Castle lead's temp pin reads nonsense | Conditional |
+| Factory app settings to change | The firmware ships with CAN mode VESC, CAN baud 500K, a 1000 ms timeout with 0 A brake current (it coasts), and a controller ID derived from the chip's UUID. Change them to UAVCAN, 1M (matching ArduPilot), about 0.5 s with a nonzero brake current, and ID 1 | Checked against the VESC firmware source, 2026-11-24 |
+| UAVCAN raw mode | What the Pixhawk's throttle command means to the VESC: Current (the default, torque), Duty (closest to a normal RC ESC and to ArduPilot's throttle-based speed control), or RPM (the VESC closes the speed loop on the halls). Duty proposed for Phase 2, RPM to revisit at sysid | Open |
+| CAN Status Rate 1 | Sets how often the VESC sends ESC status (RPM, voltage, current) to the Pixhawk; the VESC half of the ESC telemetry rate item. Record the value used | Open |
 
 ### Power and harness checks
 
@@ -420,8 +436,11 @@ Ordered roughly by when they block work.
 - [ ] **VESC low-voltage cutoff.** Pick Li-ion values (see Configuration).
 - [ ] **Packs.** Record the model, connector (the harness assumes XT60) and
       dimensions on arrival; check the battery bay and stack footprint.
-- [ ] **RC mapping.** Channel map, arm switch, mode switch and RC failsafe
-      action in ArduPilot; matching ER6 failsafe behavior.
+- [x] **RC mapping.** Settled 2026-11-24 and 25: steering CH1, throttle CH2,
+      arm on SA (CH5), mode on SC (CH7), the SE deadman on CH9, and Hold on RC
+      loss. Turning the Pocket off put the car in Hold.
+- [ ] **UAVCAN raw mode.** Pick what the VESC does with the throttle command
+      (see the VESC configuration) before handing throttle to CAN.
 - [ ] **Stop on command-node loss.** Choose the ArduPilot mechanism that stops
       the car when the Pi stops commanding (Checkpoint B criterion 3), and
       separate it from the CAN-loss stop in the harness's step 5 wording.
@@ -476,6 +495,7 @@ the record of them.
 
 | Date | Chat | Covered |
 |---|---|---|
+| 2026-11-24 | Claude Code session in this repo (not a Project chat) | Pixhawk flashed to ArduPilot Rover and set up in QGroundControl, ER6 bound, RC map, VESC factory defaults and UAVCAN raw mode |
 | 2026-10-14 | Claude Code session in this repo (not a Project chat) | X2 identified and measured in webcam mode, co-location goal, new detector |
 | 2026-10-14 | Robocar v2 dashboard and ROS2 migration | Foxglove, ROS 2 decision (ADR-001), interface proposal |
 | 2026-10-14 | FDM vs resin printer performance | Resin vs FDM, acrylic handling |
